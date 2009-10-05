@@ -1,0 +1,43 @@
+---
+name: DBIx-Connector
+version: 0.11
+author: []
+abstract: 'Fast, safe DBI connection and transaction management'
+license: perl
+resources:
+  bugtracker: http://github.com/theory/dbix-connector/issues/
+  homepage: http://search.cpan.org/dist/DBIx-Connector/
+  license: http://dev.perl.org/licenses/
+  repository: http://github.com/theory/dbix-connector/tree/
+build_requires:
+  Module::Build: 0.30
+  Test::MockModule: 0.05
+  Test::More: 0.70
+requires:
+  DBI: 1.605
+  perl: 5.006002
+recommends:
+  Test::Pod: 1.20
+  Test::Pod::Coverage: 1.06
+configure_requires:
+  Module::Build: 0.30
+provides:
+  DBIx::Connector:
+    file: lib/DBIx/Connector.pm
+    version: 0.11
+  DBIx::Connector::Driver:
+    file: lib/DBIx/Connector/Driver.pm
+  DBIx::Connector::Driver::MSSQL:
+    file: lib/DBIx/Connector/Driver/MSSQL.pm
+  DBIx::Connector::Driver::Oracle:
+    file: lib/DBIx/Connector/Driver/Oracle.pm
+  DBIx::Connector::Driver::Pg:
+    file: lib/DBIx/Connector/Driver/Pg.pm
+  DBIx::Connector::Driver::SQLite:
+    file: lib/DBIx/Connector/Driver/SQLite.pm
+  DBIx::Connector::Driver::mysql:
+    file: lib/DBIx/Connector/Driver/mysql.pm
+generated_by: Module::Build version 0.35
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4

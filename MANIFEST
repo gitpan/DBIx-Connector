@@ -1,0 +1,23 @@
+Build.PL
+Changes
+lib/DBIx/Connector.pm
+lib/DBIx/Connector/Driver.pm
+lib/DBIx/Connector/Driver/MSSQL.pm
+lib/DBIx/Connector/Driver/mysql.pm
+lib/DBIx/Connector/Driver/Oracle.pm
+lib/DBIx/Connector/Driver/Pg.pm
+lib/DBIx/Connector/Driver/SQLite.pm
+MANIFEST			This list of files
+META.yml
+README
+t/base.t
+t/do.t
+t/driver.t
+t/load.t
+t/mod_perl.t
+t/mod_perl2.t
+t/pod-coverage.t
+t/pod.t
+t/svp_do.t
+t/svp_do_live.t
+t/txn_do.t
