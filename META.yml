@@ -1,6 +1,6 @@
 ---
 name: DBIx-Connector
-version: 0.11
+version: 0.12
 author: []
 abstract: 'Fast, safe DBI connection and transaction management'
 license: perl
@@ -24,7 +24,7 @@ configure_requires:
 provides:
   DBIx::Connector:
     file: lib/DBIx/Connector.pm
-    version: 0.11
+    version: 0.12
   DBIx::Connector::Driver:
     file: lib/DBIx/Connector/Driver.pm
   DBIx::Connector::Driver::MSSQL:
