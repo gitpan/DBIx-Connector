@@ -54,12 +54,6 @@ $dbh->do($_) for (
 
 pass 'Table created';
 
-END {
-    return unless $dbh;
-    $dbh->do('DROP TABLE IF EXISTS artist');
-    $dbh->disconnect;
-}
-
 my $sel = $dbh->prepare('SELECT name FROM artist WHERE id = 1');
 my $upd = $dbh->prepare('UPDATE artist SET name = ? WHERE id = 1');
 
@@ -117,12 +111,12 @@ is $dbh->selectrow_array($sel), 'foo', 'Name should be "foo" once more';
 
 ok $dbh->commit, 'Commit the changes';
 
-# And now to see if svp_do will behave correctly
-$conn->svp_do (sub {
-    $conn->txn_do (sub { $upd->execute('Muff') });
+# And now to see if svp will behave correctly
+$conn->svp (sub {
+    $conn->txn( fixup => sub { $upd->execute('Muff') });
 
     eval {
-        $conn->svp_do(sub {
+        $conn->svp(sub {
             $upd->execute('Moff');
             is $dbh->selectrow_array($sel), 'Moff', 'Name should be "Moff" in nested transaction';
             shift->do('SELECT gack from artist');

@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 47;
+use Test::More tests => 70;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -17,7 +17,7 @@ ok my $conn = $CLASS->new( 'dbi:ExampleP:dummy', '', '' ),
 
 my $module = Test::MockModule->new($CLASS);
 
-# Test with no cached dbh.
+# Test with no existing dbh.
 $module->mock( _connect => sub {
     pass '_connect should be called';
     $module->original('_connect')->(@_);
@@ -25,59 +25,81 @@ $module->mock( _connect => sub {
 
 ok my $dbh = $conn->dbh, 'Fetch the database handle';
 ok $dbh->{AutoCommit}, 'We should not be in a txn';
-ok !$conn->{_in_do}, '_in_do should be false';
+ok !$conn->{_in_run}, '_in_run should be false';
 
-ok $conn->txn_do(sub {
+# Set up a DBI mocker.
+my $dbi_mock = Test::MockModule->new(ref $dbh, no_auto => 1);
+my $ping = 0;
+$dbi_mock->mock( ping => sub { ++$ping } );
+
+is $conn->{_dbh}, $dbh, 'The dbh should be stored';
+is $ping, 0, 'No pings yet';
+ok $conn->connected, 'We should be connected';
+is $ping, 1, 'Ping should have been called';
+ok $conn->txn( fixup => sub {
+    is $ping, 1, 'Ping should not have been called before the txn';
     ok !shift->{AutoCommit}, 'Inside, we should be in a transaction';
     ok !$conn->{AutoCommit}, 'We should be in a txn';
-    ok $conn->{_in_do}, '_in_do should be true';
-}), 'Do something with no cached handle';
+    ok $conn->{_in_run}, '_in_run should be true';
+    is $conn->dbh, $dbh, 'Should get same dbh from dbh()';
+    is $ping, 1, 'ping should not have been called again';
+}), 'Do something with no existing handle';
 $module->unmock( '_connect');
-ok !$conn->{_in_do}, '_in_do should be false again';
+ok !$conn->{_in_run}, '_in_run should be false again';
 ok $dbh->{AutoCommit}, 'Transaction should be committed';
 
-# Test with cached dbh.
-is $conn->{_dbh}, $dbh, 'The dbh should be cached';
+# Test with instantiated dbh.
+is $conn->{_dbh}, $dbh, 'The dbh should be stored';
 ok $conn->connected, 'We should be connected';
-ok $conn->txn_do(sub {
+ok $conn->txn( fixup => sub {
     my $dbha = shift;
-    is $dbha, $dbh, 'The cached handle should have been passed';
+    is $dbha, $dbh, 'The handle should have been passed';
+    is $_, $dbh, 'It should also be in $_';
+    is $_, $dbh, 'Should have dbh in $_';
+    $ping = 0;
+    is $conn->dbh, $dbh, 'Should get same dbh from dbh()';
+    is $ping, 0, 'Should have been no ping';
     ok !$dbha->{AutoCommit}, 'We should be in a transaction';
-}), 'Do something with cached handle';
+}), 'Do something with stored handle';
 ok $dbh->{AutoCommit}, 'New transaction should be committed';
 
 # Test the return value.
-ok my $foo = $conn->txn_do(sub {
+ok my $foo = $conn->txn( fixup => sub {
     return (2, 3, 5);
 }), 'Do in scalar context';
 is $foo, 5, 'The return value should be the last value';
 
-ok my @foo = $conn->txn_do(sub {
+ok my @foo = $conn->txn( fixup => sub {
     return (2, 3, 5);
 }), 'Do in array context';
 is_deeply \@foo, [2, 3, 5], 'The return value should be the list';
 
 # Test an exception.
-eval {  $conn->txn_do(sub { die 'WTF?' }) };
+eval {  $conn->txn( fixup => sub { die 'WTF?' }) };
 ok $@, 'We should have died';
 ok $dbh->{AutoCommit}, 'New transaction should rolled back';
 
 # Test a disconnect.
 my $die = 1;
 my $calls;
-$conn->txn_do(sub {
+$conn->txn( fixup => sub {
     my $dbha = shift;
+    is shift, 'foo', 'Argument should have been passed';
     ok !$dbha->{AutoCommit}, 'We should be in a transaction';
     $calls++;
     if ($die) {
-        is $dbha, $dbh, 'Should have cached dbh';
+        is $dbha, $dbh, 'Should have the stored dbh';
+        is $_, $dbh, 'It should also be in $_';
+        $ping = 0;
+        is $conn->dbh, $dbh, 'Should get same dbh from dbh()';
+        is $ping, 0, 'Should have been no ping';
         $die = 0;
         $dbha->{Active} = 0;
         ok !$dbha->{Active}, 'Disconnect';
         die 'WTF?';
     }
     isnt $dbha, $dbh, 'Should have new dbh';
-});
+}, 'foo');
 
 ok $dbh = $conn->dbh, 'Get the new handle';
 ok $dbh->{AutoCommit}, 'New transaction should be committed';
@@ -87,14 +109,15 @@ is $calls, 2, 'Sub should have been called twice';
 # Test disconnect and die.
 $calls = 0;
 eval {
-    $conn->txn_do(sub {
+    $conn->txn( fixup => sub {
         my $dbha = shift;
         ok !$dbha->{AutoCommit}, 'We should be in a transaction';
         $dbha->{Active} = 0;
         if ($calls++) {
             die 'OMGWTF?';
         } else {
-            is $dbha, $dbh, 'Should have cached dbh again';
+            is $dbha, $dbh, 'Should have the stored dbh again';
+            is $_, $dbh, 'It should also be in $_';
             die 'Disconnected';
         }
     });
@@ -105,31 +128,47 @@ is $calls, 2, 'Sub should have been called twice';
 
 # Test args.
 ok $dbh = $conn->dbh, 'Get the new handle';
-$conn->txn_do(sub {
+$conn->txn( fixup => sub {
     shift;
     is_deeply \@_, [qw(1 2 3)], 'Args should be passed through';
 }, qw(1 2 3));
 
 # Make sure nested calls work.
-$conn->txn_do(sub {
+$conn->txn( fixup => sub {
     my $dbh = shift;
     ok !$conn->{AutoCommit}, 'We should be in a txn';
     local $dbh->{Active} = 0;
-    $conn->txn_do(sub {
-        is shift, $dbh, 'Nested txn_do should get same dbh, even though inactive';
-        ok !$conn->{AutoCommit}, 'Nested txn_do should be in the txn';
+    $conn->txn( fixup => sub {
+        isnt shift, $dbh, 'Nested txn_fixup_run should not get inactive dbh';
+        ok !$conn->{AutoCommit}, 'Nested txn_fixup_run should be in the txn';
     });
 });
 
 # Make sure that it does nothing transactional if we've started the
 # transaction.
+$dbh = $conn->dbh;
 my $driver = $conn->driver;
 $driver->begin_work($dbh);
 ok !$dbh->{AutoCommit}, 'Transaction should be started';
-$conn->txn_do(sub {
+$conn->txn( fixup => sub {
     my $dbha = shift;
     is $dbha, $dbh, 'We should have the same database handle';
+    is $_, $dbh, 'It should also be in $_';
+    $ping = 0;
+    is $conn->dbh, $dbh, 'Should get same dbh from dbh()';
+    is $ping, 0, 'Should have been no ping';
     ok !$dbha->{AutoCommit}, 'Transaction should still be going';
 });
-ok !$dbh->{AutoCommit}, 'Transaction should stil be live after txn_do';
+ok !$dbh->{AutoCommit}, 'Transaction should stil be live after txn_fixup_run';
 $driver->rollback($dbh);
+
+# Make sure nested calls when ping returns false.
+$conn->txn( fixup => sub {
+    my $dbh = shift;
+    ok !$conn->{AutoCommit}, 'We should be in a txn';
+    $dbi_mock->mock( ping => 0 );
+    $conn->txn( fixup => sub {
+        is shift, $dbh, 'Nested txn_fixup_run should get same dbh, even though inactive';
+        ok !$conn->{AutoCommit}, 'Nested txn_fixup_run should be in the txn';
+    });
+});
