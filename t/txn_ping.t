@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 48;
+use Test::More tests => 54;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -79,13 +79,6 @@ eval {  $conn->txn( ping => sub { die 'WTF?' }) };
 ok $@, 'We should have died';
 ok $dbh->{AutoCommit}, 'New transaction should rolled back';
 
-# Test args.
-ok $dbh = $conn->dbh, 'Get the new handle';
-$conn->txn( ping => sub {
-    shift;
-    is_deeply \@_, [qw(1 2 3)], 'Args should be passed through';
-}, qw(1 2 3));
-
 # Make sure nested calls work.
 $conn->txn( ping => sub {
     my $dbh = shift;
@@ -127,3 +120,20 @@ $conn->txn( ping => sub {
     });
 });
 
+# Check exception handling.
+$@ = 'foo';
+ok $conn->txn(ping => sub {
+    die 'WTF!';
+}, sub {
+    like $_, qr/WTF!/, 'Should catch exception';
+    like shift, qr/WTF!/, 'catch arg should also be the exception';
+}), 'Catch and handle an exception';
+is $@, 'foo', '$@ should not be changed';
+
+ok $conn->txn( ping => sub {
+    die 'WTF!';
+}, catch => sub {
+    like $_, qr/WTF!/, 'Should catch another exception';
+    like shift, qr/WTF!/, 'catch arg should also be the new exception';
+}), 'Catch and handle another exception';
+is $@, 'foo', '$@ still should not be changed';

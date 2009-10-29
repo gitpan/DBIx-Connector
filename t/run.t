@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 40;
+use Test::More tests => 47;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -65,13 +65,7 @@ is_deeply \@foo, [2, 3, 5], 'The return value should be the list';
 
 # Test an exception.
 eval {  $conn->run(sub { die 'WTF?' }) };
-ok $@, 'We should have died';
-
-# Check that args are passed.
-$conn->run(sub {
-    shift;
-    is_deeply \@_, [qw(1 2 3)], 'Args should be passed through';
-}, qw(1 2 3));
+like $@, qr/WTF/, 'We should have died';
 
 # Make sure nesting works okay.
 ok !$conn->{_in_run}, '_in_run should be false';
@@ -110,3 +104,20 @@ $conn->run(sub {
         ok $conn->{_in_run}, '_in_run should be set inside nested run()';
     });
 });
+
+$@ = 'foo';
+ok $conn->run(sub {
+    die 'WTF!';
+}, sub {
+    like $_, qr/WTF!/, 'Should catch exception';
+    like shift, qr/WTF!/, 'catch arg should also be the exception';
+}), 'Catch and handle an exception';
+is $@, 'foo', '$@ should not be changed';
+
+ok $conn->run(sub {
+    die 'WTF!';
+}, catch => sub {
+    like $_, qr/WTF!/, 'Should catch another exception';
+    like shift, qr/WTF!/, 'catch arg should also be the new exception';
+}), 'Catch and handle another exception';
+is $@, 'foo', '$@ still should not be changed';

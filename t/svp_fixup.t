@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 32;
+use Test::More tests => 38;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -11,8 +11,6 @@ BEGIN {
     $CLASS = 'DBIx::Connector';
     use_ok $CLASS or die;
 }
-
-
 
 ok my $conn = $CLASS->new( 'dbi:ExampleP:dummy', '', '' ),
     'Get a connection';
@@ -65,19 +63,6 @@ ok my @foo = $conn->svp( fixup => sub {
 }), 'Do in array context';
 is_deeply \@foo, [2, 3, 5], 'The return value should be the list';
 
-# Test args.
-$conn->svp( fixup => sub {
-    shift;
-    is_deeply \@_, [qw(1 2 3)], 'Args should be passed through from implicit txn';
-}, qw(1 2 3));
-
-$conn->txn( fixup => sub {
-    $conn->svp( fixup => sub {
-        shift;
-        is_deeply \@_, [qw(1 2 3)], 'Args should be passed inside explicit txn';
-    }, qw(1 2 3));
-});
-
 # Make sure nested calls work.
 $conn->svp( fixup => sub {
     my $dbh = shift;
@@ -91,3 +76,22 @@ $conn->svp( fixup => sub {
     });
     is $conn->{_svp_depth}, 1, 'Depth should be 1 again';
 });
+
+
+# Check exception handling.
+local $@ = 'foo';
+ok $conn->svp(fixup => sub {
+    die 'WTF!';
+}, sub {
+    like $_, qr/WTF!/, 'Should catch exception';
+    like shift, qr/WTF!/, 'catch arg should also be the exception';
+}), 'Catch and handle an exception';
+is $@, 'foo', '$@ should not be changed';
+
+ok $conn->svp(fixup => sub {
+    die 'WTF!';
+}, catch => sub {
+    like $_, qr/WTF!/, 'Should catch another exception';
+    like shift, qr/WTF!/, 'catch arg should also be the new exception';
+}), 'Catch and handle another exception';
+is $@, 'foo', '$@ still should not be changed';

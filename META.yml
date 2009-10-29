@@ -1,50 +1,51 @@
 ---
-name: DBIx-Connector
-version: 0.20
-author: []
 abstract: 'Fast, safe DBI connection and transaction management'
+author:
+  - 'David E. Wheeler <david@kineticode.com>'
+build_requires:
+  Module::Build: 0.30
+  Test::MockModule: 0.05
+  Test::More: 0.88
+configure_requires:
+  Module::Build: 0.30
+generated_by: 'Module::Build version 0.3504'
 license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: DBIx-Connector
+provides:
+  DBIx::Connector:
+    file: lib/DBIx/Connector.pm
+    version: 0.30
+  DBIx::Connector::Driver:
+    file: lib/DBIx/Connector/Driver.pm
+    version: 0.30
+  DBIx::Connector::Driver::MSSQL:
+    file: lib/DBIx/Connector/Driver/MSSQL.pm
+    version: 0.30
+  DBIx::Connector::Driver::Oracle:
+    file: lib/DBIx/Connector/Driver/Oracle.pm
+    version: 0.30
+  DBIx::Connector::Driver::Pg:
+    file: lib/DBIx/Connector/Driver/Pg.pm
+    version: 0.30
+  DBIx::Connector::Driver::SQLite:
+    file: lib/DBIx/Connector/Driver/SQLite.pm
+  DBIx::Connector::Driver::mysql:
+    file: lib/DBIx/Connector/Driver/mysql.pm
+    version: 0.30
+  DBIx::Connector::Proxy:
+    file: lib/DBIx/Connector.pm
+recommends:
+  Test::Pod: 1.20
+  Test::Pod::Coverage: 1.06
+requires:
+  DBI: 1.605
+  perl: 5.006002
 resources:
   bugtracker: http://github.com/theory/dbix-connector/issues/
   homepage: http://search.cpan.org/dist/DBIx-Connector/
   license: http://dev.perl.org/licenses/
   repository: http://github.com/theory/dbix-connector/tree/
-build_requires:
-  Module::Build: 0.30
-  Test::MockModule: 0.05
-  Test::More: 0.88
-requires:
-  DBI: 1.605
-  perl: 5.006002
-recommends:
-  Test::Pod: 1.20
-  Test::Pod::Coverage: 1.06
-configure_requires:
-  Module::Build: 0.30
-provides:
-  DBIx::Connector:
-    file: lib/DBIx/Connector.pm
-    version: 0.20
-  DBIx::Connector::Driver:
-    file: lib/DBIx/Connector/Driver.pm
-    version: 0.20
-  DBIx::Connector::Driver::MSSQL:
-    file: lib/DBIx/Connector/Driver/MSSQL.pm
-    version: 0.20
-  DBIx::Connector::Driver::Oracle:
-    file: lib/DBIx/Connector/Driver/Oracle.pm
-    version: 0.20
-  DBIx::Connector::Driver::Pg:
-    file: lib/DBIx/Connector/Driver/Pg.pm
-    version: 0.20
-  DBIx::Connector::Driver::SQLite:
-    file: lib/DBIx/Connector/Driver/SQLite.pm
-  DBIx::Connector::Driver::mysql:
-    file: lib/DBIx/Connector/Driver/mysql.pm
-    version: 0.20
-  DBIx::Connector::Proxy:
-    file: lib/DBIx/Connector.pm
-generated_by: Module::Build version 0.35
-meta-spec:
-  url: http://module-build.sourceforge.net/META-spec-v1.4.html
-  version: 1.4
+version: 0.30

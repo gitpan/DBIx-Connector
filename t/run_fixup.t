@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 49;
+use Test::More tests => 54;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -65,14 +65,13 @@ is_deeply \@foo, [2, 3, 5], 'The return value should be the list';
 
 # Test an exception.
 eval {  $conn->run( fixup => sub { die 'WTF?' }) };
-ok $@, 'We should have died';
+like $@, qr/WTF/, 'We should have died';
 
 # Test a disconnect.
 my $die = 1;
 my $calls;
 $conn->run( fixup => sub {
     my $dbha = shift;
-    is shift, 'foo', 'Argument should have been passed';
     $calls++;
     if ($die) {
         is $_, $dbh, 'Should have dbh in $_';
@@ -86,15 +85,9 @@ $conn->run( fixup => sub {
         die 'WTF?';
     }
     isnt $dbha, $dbh, 'Should have new dbh';
-}, 'foo');
+});
 
 is $calls, 2, 'Sub should have been called twice';
-
-# Check that args are passed.
-$conn->run( fixup => sub {
-    shift;
-    is_deeply \@_, [qw(1 2 3)], 'Args should be passed through';
-}, qw(1 2 3));
 
 # Make sure nesting works okay.
 ok !$conn->{_in_run}, '_in_run should be false';
@@ -133,3 +126,21 @@ $conn->run( fixup => sub {
         ok $conn->{_in_run}, '_in_run should be set inside nested run( fixup => )';
     });
 });
+
+# Check exception handling.
+$@ = 'foo';
+ok $conn->run(fixup => sub {
+    die 'WTF!';
+}, sub {
+    like $_, qr/WTF!/, 'Should catch exception';
+    like shift, qr/WTF!/, 'catch arg should also be the exception';
+}), 'Catch and handle an exception';
+is $@, 'foo', '$@ should not be changed';
+
+ok $conn->run(fixup => sub {
+    die 'WTF!';
+}, catch => sub {
+    like $_, qr/WTF!/, 'Should catch another exception';
+    like shift, qr/WTF!/, 'catch arg should also be the new exception';
+}), 'Catch and handle another exception';
+is $@, 'foo', '$@ still should not be changed';

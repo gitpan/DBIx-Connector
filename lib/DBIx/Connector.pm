@@ -6,7 +6,9 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.20';
+our $VERSION = '0.30';
+
+my $die = sub { die @_ };
 
 sub new {
     my $class = shift;
@@ -105,21 +107,34 @@ sub disconnect {
     return $self;
 }
 
+sub _errh {
+    # Return $_[1] if $_[0] eq 'catch', $_[0] if it's CODE, else $die.
+    !$_[0] ? $die
+           : $_[0] eq 'catch'    ? $_[1]
+           : ref $_[0] eq 'CODE' ? $_[0]
+           :                       $die;
+}
+
 sub run {
-      my $self = shift;
+    my $self = shift;
     my $mode = ref $_[0] eq 'CODE' ? 'no_ping' : shift;
-    return $self->_fixup_run(@_) if $mode eq 'fixup';
+    my $code = shift;
+    my $errh = _errh(@_);
+    local $@ if $errh ne $die;
+    return $self->_fixup_run($code, $errh) if $mode eq 'fixup';
     my $dbh = $mode eq 'ping' ? $self->dbh : $self->_dbh;
-    return $self->_run($dbh, @_);
+    return $self->_run($dbh, $code, $errh);
   }
 
 sub _run {
     my $self = shift;
     my $dbh  = shift;
     my $code = shift;
+    my $errh = shift;
     local $self->{_in_run} = 1;
     my $wantarray = wantarray;
-    my @ret = _exec( $dbh, $code, $wantarray, @_ );
+    my @ret = eval { _exec( $dbh, $code, $wantarray ) };
+    if (my $e = $@) { return $errh->($e) for $e }
     return $wantarray ? @ret : $ret[0];
 }
 
@@ -127,21 +142,23 @@ sub _fixup_run {
     my $self = shift;
     my $code = shift;
     my $dbh  = $self->_dbh;
+    my $errh = shift;
 
     my @ret;
     my $wantarray = wantarray;
     if ($self->{_in_run} || !$dbh->{AutoCommit}) {
-        @ret = _exec( $dbh, $code, $wantarray, @_ );
+        @ret = _exec( $dbh, $code, $wantarray );
         return wantarray ? @ret : $ret[0];
     }
 
     local $self->{_in_run} = 1;
-    @ret = eval { _exec( $dbh, $code, $wantarray, @_ ) };
+    @ret = eval { _exec( $dbh, $code, $wantarray ) };
 
     if (my $err = $@) {
-        die $err if $self->connected;
+        if ($self->connected) { return $errh->($err) for $err }
         # Not connected. Try again.
-        @ret = _exec( $self->_connect, $code, $wantarray, @_ );
+        @ret = eval { _exec( $self->_connect, $code, $wantarray ) };
+        if (my $e = $@) { return $errh->($e) for $e }
     }
 
     return $wantarray ? @ret : $ret[0];
@@ -150,15 +167,19 @@ sub _fixup_run {
 sub txn {
     my $self = shift;
     my $mode = ref $_[0] eq 'CODE' ? 'no_ping' : shift;
-    return $self->_txn_fixup_run(@_) if $mode eq 'fixup';
+    my $code = shift;
+    my $errh = _errh(@_);
+    local $@ if $errh ne $die;
+    return $self->_txn_fixup_run($code, $errh) if $mode eq 'fixup';
     my $dbh = $mode eq 'ping' ? $self->dbh : $self->_dbh;
-    return $self->_txn_run($dbh, @_);
+    return $self->_txn_run($dbh, $code, $errh);
 }
 
 sub _txn_run {
-    my $self   = shift;
-    my $dbh    = shift;
-    my $code   = shift;
+    my $self = shift;
+    my $dbh  = shift;
+    my $code = shift;
+    my $errh = shift;
     my $driver = $self->driver;
 
     my $wantarray = wantarray;
@@ -166,19 +187,19 @@ sub _txn_run {
     local $self->{_in_run}  = 1;
 
     unless ($dbh->{AutoCommit}) {
-        @ret = _exec( $dbh, $code, $wantarray, @_ );
+        @ret = _exec( $dbh, $code, $wantarray );
         return $wantarray ? @ret : $ret[0];
     }
 
     eval {
         $driver->begin_work($dbh);
-        @ret = _exec( $dbh, $code, $wantarray, @_ );
+        @ret = _exec( $dbh, $code, $wantarray );
         $driver->commit($dbh);
     };
 
     if (my $err = $@) {
         $driver->rollback($dbh);
-        die $err;
+        return $errh->($err) for $err;
     }
 
     return $wantarray ? @ret : $ret[0];
@@ -187,6 +208,7 @@ sub _txn_run {
 sub _txn_fixup_run {
     my $self   = shift;
     my $code   = shift;
+    my $errh   = shift;
     my $dbh    = $self->_dbh;
     my $driver = $self->driver;
 
@@ -195,71 +217,70 @@ sub _txn_fixup_run {
     local $self->{_in_run}  = 1;
 
     unless ($dbh->{AutoCommit}) {
-        @ret = _exec( $dbh, $code, $wantarray, @_ );
+        @ret = _exec( $dbh, $code, $wantarray );
         return $wantarray ? @ret : $ret[0];
     }
 
     eval {
         $driver->begin_work($dbh);
-        @ret = _exec( $dbh, $code, $wantarray, @_ );
+        @ret = _exec( $dbh, $code, $wantarray );
         $driver->commit($dbh);
     };
 
     if (my $err = $@) {
         if ($self->connected) {
             $driver->rollback($dbh);
-            die $err;
+            return $errh->($err) for $err;
         }
         # Not connected. Try again.
         $dbh = $self->_connect;
         eval {
             $driver->begin_work($dbh);
-            @ret = _exec( $dbh, $code, $wantarray, @_ );
+            @ret = _exec( $dbh, $code, $wantarray );
             $driver->commit($dbh);
         };
         if (my $err = $@) {
             $driver->rollback($dbh);
-            die $err;
+            return $errh->($err) for $err;
         }
     }
 
     return $wantarray ? @ret : $ret[0];
 }
 
-# XXX Should we make svp_run ignore databases that don't support savepoints,
-# basically making it work just like txn_fixup_run for those platforms?
-
 sub svp {
     my $self = shift;
     my $mode = ref $_[0] eq 'CODE' ? 'no_ping' : shift;
     my $code = shift;
+    my $errh = _errh(@_);
     my $dbh  = $self->{_dbh};
 
+    local $@ if $errh ne $die;
+
     # Gotta have a transaction.
-    if (!$dbh || $dbh->{AutoCommit}) {
-        my @args = @_;
-        return $self->txn( $mode => sub { $self->svp( $code, @args ) } );
-    }
+    return $self->txn( $mode => sub { $self->svp( $code, $errh ) } )
+        if !$dbh || $dbh->{AutoCommit};
 
     my @ret;
     my $wantarray = wantarray;
-    my $name = "savepoint_$self->{_svp_depth}";
+    my $driver    = $self->driver;
+    my $name      = "savepoint_$self->{_svp_depth}";
     ++$self->{_svp_depth};
 
     eval {
-        $self->savepoint($name);
-        @ret = _exec( $dbh, $code, $wantarray, @_ );
-        $self->release($name);
+        $driver->savepoint($dbh, $name);
+        @ret = _exec( $dbh, $code, $wantarray );
+        $driver->release($dbh, $name);
     };
     --$self->{_svp_depth};
 
     if (my $err = $@) {
         # If we died, there is nothing to be done.
         if ($self->connected) {
-            $self->rollback_to($name);
-            $self->release($name);
+            $driver->rollback_to($dbh, $name);
+            $driver->release($dbh, $name);
         }
-        die $err;
+        return $errh->($err) for $err;
     }
 
     return $wantarray ? @ret : $ret[0];
@@ -281,7 +302,7 @@ PROXY: {
 
     sub mode { shift->{mode} }
     sub conn { shift->{conn} }
-    sub dbh  { shift->{conn}->dbh(@_) }
+    sub dbh  { shift->{conn}->dbh }
 
     sub run {
         my $self = shift;
@@ -328,34 +349,19 @@ sub clear_cache {
     shift;
 }
 
-sub savepoint {
-    my ($self, $name) = @_;
-    return $self->driver->savepoint($self->{_dbh}, $name);
-}
-
-sub release {
-    my ($self, $name) = @_;
-    return $self->driver->release($self->{_dbh}, $name);
-}
-
-sub rollback_to {
-    my ($self, $name) = @_;
-    return $self->driver->rollback_to($self->{_dbh}, $name);
-}
-
 sub _exec {
     my ($dbh, $code, $wantarray) = (shift, shift, shift);
     local $_ = $dbh;
     my @result;
     if ($wantarray) {
-        @result = $code->($dbh, @_);
+        @result = $code->($dbh);
     }
     elsif (defined $wantarray) {
-        $result[0] = $code->($dbh, @_);
+        $result[0] = $code->($dbh);
     }
     else {
         # void context.
-        $code->($dbh, @_);
+        $code->($dbh);
     }
     return @result;
 }
@@ -390,7 +396,7 @@ DBIx::Connector - Fast, safe DBI connection and transaction management
   $dbh->do('INSERT INTO foo (name) VALUES (?)', undef, 'Fred' );
 
   # Do something with the handle more efficiently.
-  $conn->run( fixup => sub {
+  $conn->run(fixup => sub {
       $_->do('INSERT INTO foo (name) VALUES (?)', undef, 'Fred' );
   });
 
@@ -454,7 +460,7 @@ you can scope savepoints to behave like subtransactions, so that you can save
 some of your work in a transaction even if some of it fails. See
 L<C<txn()>|/"txn"> and L<C<svp()>|/"svp"> for the goods.
 
-=head2 Usage
+=head1 Usage
 
 Unlike L<Apache::DBI|Apache::DBI> and L<C<connect_cached()>|DBI/connect_cached>,
 DBIx::Connector doesn't cache database handles. Rather, for a given
@@ -474,7 +480,7 @@ The upshot is that your code is responsible for hanging onto a connection for
 as long as it needs it. There is no magical connection caching like in
 L<Apache::DBI|Apache::DBI> and L<C<connect_cached()>|DBI/connect_cached>.
 
-=head3 Execution Methods
+=head2 Execution Methods
 
 The real utility of DBIx::Connector comes from the use of the execution
 methods, L<C<run()>|/"run">, L<C<txn()>|/"txn">, or L<C<svp()>|/"svp">.
@@ -514,7 +520,7 @@ The supported modes are:
 
 Use them like so:
 
-  $conn->run( ping => sub { $_->do($query) } );
+  $conn->run(ping => sub { $_->do($query) });
 
 In C<ping> mode, C<run()> will ping the database I<before> running the block.
 This is similar to what L<Apache::DBI|Apache::DBI> and L<DBI|DBI>'s
@@ -531,7 +537,7 @@ side-effects outside of the database,> as double-execution in the event of a
 stale database connection could break something:
 
   my $count;
-  $conn->run( fixup => sub { $count++ });
+  $conn->run(fixup => sub { $count++ });
   say $count; # may be 1 or 2
 
 C<fixup> is the most efficient connection mode. If you're confident that the
@@ -546,6 +552,55 @@ recommended in any event.
 Simple, huh? Better still, go for the transaction management in
 L<C<txn()>|/"txn"> and the savepoint management in L<C<svp()>|/"svp">. You
 won't be sorry, I promise.
+
+=head3 Exception Handling
+
+Another optional feature of the execution methods L<C<run()>|/"run">,
+L<C<txn()>|/"txn">, and L<C<svp()>|/"svp"> is integrated exception handling.
+By default, if an exception is thrown by a block passed to one of these
+methods, by default it will simply be propagated back to you (after any
+necessary transaction or savepoint rollbacks). You can of course use the
+standard Perl exception handling to deal with this situation:
+
+  eval {
+      $conn->run(sub { die 'WTF!' });
+  };
+  if (my $err = $@) {
+      warn "Caught exception: $_";
+  }
+
+You can also use an exception handling module like L<Try::Tiny|Try::Tiny> to
+handle exceptions more cleanly:
+
+  use Try::Tiny;
+  try {
+      $conn->run(sub { die 'WTF!' });
+  } catch {
+      warn "Caught exception: $_";
+  };
+
+But even better is to simply pass a C<catch> code block to the execution
+method:
+
+  $conn->run(sub {
+      die 'WTF!';
+  }, catch => sub {
+      warn "Caught exception: $_";
+  });
+
+Because it's a simple code reference, you can even use the sugar function
+C<catch> from L<Try::Tiny|Try::Tiny>:
+
+  $conn->run(sub {
+      die 'WTF!';
+  }, catch {
+      warn "Caught exception: $_";
+  });
+
+Either way, when an exception handler is passed, C<$@> is properly localized,
+so that if it happens to have a value before you call the execution method,
+that value will be preserved afterward. This is, therefore, the recommended
+way to handle execution exceptions in DBIx::Connector.
 
 =head1 Interface
 
@@ -595,15 +650,10 @@ blocks.
 
 =head3 C<run>
 
-  $conn->run( ping => sub { $_->do($query) } );
+  $conn->run(ping => sub { $_->do($query) });
 
 Simply executes the block, setting C<$_> to and passing in the database
-handle. Any other arguments passed are passed as extra arguments to the block:
-
-  my @res = $conn->run(sub {
-      my ($dbh, @args) = @_;
-      $dbh->selectrow_array(@args);
-  }, $query, $sql, undef, $value);
+handle.
 
 An optional first argument sets the connection mode, and may be one of
 C<ping>, C<fixup>, or C<no_ping> (the default). See L</"Connection Modes"> for
@@ -624,7 +674,8 @@ connection mode applies only to the outer-most block method call.
   });
 
 All code executed inside the top-level call to C<txn()> will be executed in a
-single transaction. If you'd like subtransactions, see L<C<svp()>|/svp>.
+single transaction. If you'd like subtransactions, nest L<C<svp()>|/svp>
+calls.
 
 It's preferable to use C<dbh()> to fetch the database handle from within the
 block if your code is doing lots of non-database stuff (shame on you!):
@@ -641,7 +692,7 @@ C<svp()> block.
 
 =head3 C<txn>
 
-  my $sth = $conn->txn( fixup => sub { $_->do($query) } );
+  my $sth = $conn->txn(fixup => sub { $_->do($query) });
 
 Starts a transaction, executes the block block, setting C<$_> to and passing
 in the database handle, and commits the transaction. If the block throws an
@@ -666,7 +717,7 @@ of savepoints as a kind of subtransaction. What this means is that you can
 nest your savepoints and recover from failures deeper in the nest without
 throwing out all changes higher up in the nest. For example:
 
-  $conn->txn( fixup => sub {
+  $conn->txn(fixup => sub {
       my $dbh = shift;
       $dbh->do('INSERT INTO table1 VALUES (1)');
       eval {
@@ -681,7 +732,7 @@ throwing out all changes higher up in the nest. For example:
 
 This transaction will insert the values 1 and 3, but not 2.
 
-  $conn->txn( fixup => sub {
+  $conn->svp(fixup => sub {
       my $dbh = shift;
       $dbh->do('INSERT INTO table1 VALUES (4)');
       $conn->svp(sub {
@@ -690,6 +741,21 @@ This transaction will insert the values 1 and 3, but not 2.
   });
 
 This transaction will insert both 4 and 5.
+
+Superficially, C<svp()> resembles L<C<run()>|/"run"> and L<C<txn()>|/"txn">,
+including its support for the optional L<connection mode|/"Connection Modes">
+argument, but in fact savepoints can only be used within the scope of a
+transaction. Thus C<svp()> will start a transaction for you if it's called
+without a transaction in-progress. It simply redispatches to C<txn()> with the
+appropriate connection mode. Thus, this call from outside of a transaction:
+
+  $conn->svp(ping => sub { ...} );
+
+Is equivalent to:
+
+  $conn->txn(ping => sub {
+      $conn->svp( sub { ... } );
+  })
 
 Savepoints are supported by the following RDBMSs:
 
@@ -707,24 +773,10 @@ Savepoints are supported by the following RDBMSs:
 
 =back
 
-Superficially, C<svp()> resembles L<C<run()>|/"run"> and L<C<txn()>|/"txn">,
-including its support for the optional L<connection mode|/"Connection Modes">
-argument, but it's actually designed to be called from inside a C<txn()>
-block. However, C<svp()> will start a transaction for you if it's called
-without a transaction in-progress. Each simply redispatches to C<txn()> with
-the appropriate connection mode. Thus, this call from outside of a
-transaction:
-
-  $conn->svp( ping => sub { ...} );
-
-Is equivalent to:
-
-  $conn->txn( ping => sub {
-      $conn->svp( sub { ... } );
-  })
-
-But most often you'll want to explicitly use L<C<svp()>|/svp> from within a
-transaction block.
+For all other RDBMSs, C<svp()> works just like C<txn()>: savepoints will be
+ignored and the outer-most transaction will be the only transaction. This
+tends to degrade well for non-savepoint-supporting databases, doing the right
+thing in most cases.
 
 =head3 C<with>
 
@@ -831,15 +883,7 @@ your use of the API universal across database back-ends.
 
 =begin comment
 
-Not sure yet if I want these to be public. I might kill them off.
-
-=head3 C<savepoint>
-
-=head3 C<release>
-
-=head3 C<rollback_to>
-
-Theese are deprecated:
+These are deprecated:
 
 =head3 C<do>
 
@@ -889,7 +933,9 @@ This module was written and is maintained by:
 
 =over
 
-=item David E. Wheeler <david@kineticode.com>
+=item *
+
+David E. Wheeler <david@kineticode.com>
 
 =back
 
@@ -918,16 +964,6 @@ It is based on documentation, ideas, kibbitzing, and code from:
 =item * Alex Pavlovic <alex.pavlovic@taskforce-1.com>
 
 =item * Many other L<DBIx::Class contributors|DBIx::Class/CONTRIBUTORS>
-
-=back
-
-=head1 To Do
-
-=over
-
-=item * Add an C<auto_savepoint> option?
-
-=item * Integrate exception handling in a C<catch()> method?
 
 =back
 

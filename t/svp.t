@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 32;
+use Test::More tests => 38;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -63,19 +63,6 @@ ok my @foo = $conn->svp(sub {
 }), 'Do in array context';
 is_deeply \@foo, [2, 3, 5], 'The return value should be the list';
 
-# Test args.
-$conn->svp(sub {
-    shift;
-    is_deeply \@_, [qw(1 2 3)], 'Args should be passed through from implicit txn';
-}, qw(1 2 3));
-
-$conn->txn(sub {
-    $conn->svp(sub {
-        shift;
-        is_deeply \@_, [qw(1 2 3)], 'Args should be passed inside explicit txn';
-    }, qw(1 2 3));
-});
-
 # Make sure nested calls work.
 $conn->svp(sub {
     my $dbh = shift;
@@ -89,3 +76,21 @@ $conn->svp(sub {
     });
     is $conn->{_svp_depth}, 1, 'Depth should be 1 again';
 });
+
+# Check exception handling.
+$@ = 'foo';
+ok $conn->svp(sub {
+    die 'WTF!';
+}, sub {
+    like $_, qr/WTF!/, 'Should catch exception';
+    like shift, qr/WTF!/, 'catch arg should also be the exception';
+}), 'Catch and handle an exception';
+is $@, 'foo', '$@ should not be changed';
+
+ok $conn->svp(sub {
+    die 'WTF!';
+}, catch => sub {
+    like $_, qr/WTF!/, 'Should catch another exception';
+    like shift, qr/WTF!/, 'catch arg should also be the new exception';
+}), 'Catch and handle another exception';
+is $@, 'foo', '$@ still should not be changed';
