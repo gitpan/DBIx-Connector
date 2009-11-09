@@ -6,26 +6,23 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 my $die = sub { die @_ };
 
 sub new {
     my $class = shift;
-    my $args = [@_];
     bless {
-        _args      => $args,
+        _args      => [@_],
         _svp_depth => 0,
     } => $class;
 }
 
-sub DESTROY {
-    shift->disconnect;
-}
+sub DESTROY { shift->disconnect }
 
 sub _connect {
     my $self = shift;
-    my $dbh = do {
+    $self->{_dbh} = do {
         if ($INC{'Apache/DBI.pm'} && $ENV{MOD_PERL}) {
             local $DBI::connect_via = 'connect'; # Disable Apache::DBI.
             DBI->connect( @{ $self->{_args} } );
@@ -37,9 +34,9 @@ sub _connect {
     $self->{_tid} = threads->tid if $INC{'threads.pm'};
 
     # Set the driver.
-    $self->driver;
+    $self->driver unless $self->{driver};
 
-    return $self->{_dbh} = $dbh;
+    return $self->{_dbh};
 }
 
 sub driver {
@@ -75,13 +72,12 @@ sub connected {
     my $self = shift;
     return unless $self->_seems_connected;
     my $dbh = $self->{_dbh} or return;
-    #be on the safe side
-    local $dbh->{RaiseError} = 1;
+    local $dbh->{RaiseError} = 1; # be on the safe side
     return $self->driver->ping($dbh);
 }
 
-# Returns true if there is a database handle and the PID and TID have not changed
-# and the handle's Active attribute is true.
+# Returns true if there is a database handle and the PID and TID have not
+# changed and the handle's Active attribute is true.
 sub _seems_connected {
     my $self = shift;
     my $dbh = $self->{_dbh} or return;
@@ -110,16 +106,16 @@ sub disconnect {
 sub _errh {
     # Return $_[1] if $_[0] eq 'catch', $_[0] if it's CODE, else $die.
     !$_[0] ? $die
-           : $_[0] eq 'catch'    ? $_[1]
-           : ref $_[0] eq 'CODE' ? $_[0]
-           :                       $die;
+           : $_[0]     eq 'catch' ? $_[1]
+           : ref $_[0] eq 'CODE'  ? $_[0]
+           :                        $die;
 }
 
 sub run {
     my $self = shift;
     my $mode = ref $_[0] eq 'CODE' ? 'no_ping' : shift;
     my $code = shift;
-    my $errh = _errh(@_);
+    my $errh = &_errh;
     local $@ if $errh ne $die;
     return $self->_fixup_run($code, $errh) if $mode eq 'fixup';
     my $dbh = $mode eq 'ping' ? $self->dbh : $self->_dbh;
@@ -127,10 +123,7 @@ sub run {
   }
 
 sub _run {
-    my $self = shift;
-    my $dbh  = shift;
-    my $code = shift;
-    my $errh = shift;
+    my ($self, $dbh, $code, $errh) = @_;
     local $self->{_in_run} = 1;
     my $wantarray = wantarray;
     my @ret = eval { _exec( $dbh, $code, $wantarray ) };
@@ -139,10 +132,8 @@ sub _run {
 }
 
 sub _fixup_run {
-    my $self = shift;
-    my $code = shift;
+    my ($self, $code, $errh) = @_;
     my $dbh  = $self->_dbh;
-    my $errh = shift;
 
     my @ret;
     my $wantarray = wantarray;
@@ -168,7 +159,7 @@ sub txn {
     my $self = shift;
     my $mode = ref $_[0] eq 'CODE' ? 'no_ping' : shift;
     my $code = shift;
-    my $errh = _errh(@_);
+    my $errh = &_errh;
     local $@ if $errh ne $die;
     return $self->_txn_fixup_run($code, $errh) if $mode eq 'fixup';
     my $dbh = $mode eq 'ping' ? $self->dbh : $self->_dbh;
@@ -176,10 +167,7 @@ sub txn {
 }
 
 sub _txn_run {
-    my $self = shift;
-    my $dbh  = shift;
-    my $code = shift;
-    my $errh = shift;
+    my ($self, $dbh, $code, $errh) = @_;
     my $driver = $self->driver;
 
     my $wantarray = wantarray;
@@ -206,9 +194,7 @@ sub _txn_run {
 }
 
 sub _txn_fixup_run {
-    my $self   = shift;
-    my $code   = shift;
-    my $errh   = shift;
+    my ($self, $code, $errh) = @_;
     my $dbh    = $self->_dbh;
     my $driver = $self->driver;
 
@@ -250,16 +236,16 @@ sub _txn_fixup_run {
 
 sub svp {
     my $self = shift;
-    my $mode = ref $_[0] eq 'CODE' ? 'no_ping' : shift;
-    my $code = shift;
-    my $errh = _errh(@_);
     my $dbh  = $self->{_dbh};
 
-    local $@ if $errh ne $die;
-
     # Gotta have a transaction.
-    return $self->txn( $mode => sub { $self->svp( $code, $errh ) } )
-        if !$dbh || $dbh->{AutoCommit};
+    return $self->txn( @_ ) if !$dbh || $dbh->{AutoCommit};
+
+    my $mode = ref $_[0] eq 'CODE' ? 'no_ping' : shift;
+    my $code = shift;
+    my $errh = &_errh;
+
+    local $@ if $errh ne $die;
 
     my @ret;
     my $wantarray = wantarray;
@@ -288,6 +274,8 @@ sub svp {
 
 PROXY: {
     package DBIx::Connector::Proxy;
+    our $VERSION = '0.31';
+
     sub new {
         my ($class, $conn, $mode) = @_;
         require Carp && Carp::croak('Missing required mode argument')
@@ -320,50 +308,15 @@ PROXY: {
     }
 }
 
-sub with {
-    DBIx::Connector::Proxy->new(@_);
-}
-
-# Deprecated methods.
-sub do {
-    require Carp;
-    Carp::cluck('DBIx::Connctor::do() is deprecated; use fixup_run() instead');
-    shift->_fixup_run(@_);
-}
-
-sub txn_do {
-    require Carp;
-    Carp::cluck('txn_do() is deprecated; use txn_fixup_run() instead');
-    shift->_txn_fixup_run(@_);
-}
-
-sub svp_do {
-    require Carp;
-    Carp::cluck('svp_do() is deprecated; use svp_run() instead');
-    shift->svp(fixup => @_);
-}
-
-sub clear_cache {
-    require Carp;
-    Carp::cluck('clear_cache() is deprecated; DBIx::Connector no longer uses caching');
-    shift;
-}
+sub with { DBIx::Connector::Proxy->new(@_) }
 
 sub _exec {
-    my ($dbh, $code, $wantarray) = (shift, shift, shift);
+    my ($dbh, $code, $wantarray) = @_;
     local $_ = $dbh;
-    my @result;
-    if ($wantarray) {
-        @result = $code->($dbh);
-    }
-    elsif (defined $wantarray) {
-        $result[0] = $code->($dbh);
-    }
-    else {
-        # void context.
-        $code->($dbh);
-    }
-    return @result;
+    return $wantarray ? $code->($dbh) : ($code->($dbh))[-1]
+        if defined $wantarray;
+    $code->($dbh);
+    return
 }
 
 1;
@@ -468,7 +421,7 @@ connection, it makes sure that the connection just there whenever you want it,
 to the extent possible. The upshot is that it's safe to create a connection
 and then keep it around for as long as you need it, like so:
 
-  my $conn = DBI->connect(@args);
+  my $conn = DBIx::Connector->new(@args);
 
 You can store this somewhere in your app where you can easily access it, and
 for as long as it remains in scope, it will try its hardest to maintain a
@@ -500,7 +453,7 @@ use C<run()> (or C<txn()>).
 
 Of course, if a block passed to C<run()> dies because the DBI isn't actually
 connected to the database you'd need to catch that failure and try again.
-DBIx::Connection provides a way to overcome this issue: connection modes.
+DBIx::Connector provides a way to overcome this issue: connection modes.
 
 =head3 Connection Modes
 
@@ -525,7 +478,7 @@ Use them like so:
 In C<ping> mode, C<run()> will ping the database I<before> running the block.
 This is similar to what L<Apache::DBI|Apache::DBI> and L<DBI|DBI>'s
 L<C<connect_cached()>|DBI/connect_cached> do to check the database connection
-connected, and is the safest way to do so. If the ping fails, DBIx::Connection
+connected, and is the safest way to do so. If the ping fails, DBIx::Connector
 will attempt to reconnect to the database before executing the block. However,
 C<ping> mode does impose the overhead of the C<ping> ever time you use it.
 
@@ -584,7 +537,7 @@ method:
 
   $conn->run(sub {
       die 'WTF!';
-  }, catch => sub {
+  }, sub {
       warn "Caught exception: $_";
   });
 
@@ -749,7 +702,9 @@ transaction. Thus C<svp()> will start a transaction for you if it's called
 without a transaction in-progress. It simply redispatches to C<txn()> with the
 appropriate connection mode. Thus, this call from outside of a transaction:
 
-  $conn->svp(ping => sub { ...} );
+  $conn->svp(ping => sub {
+      $conn->svp( sub { ... } );
+  });
 
 Is equivalent to:
 
@@ -880,20 +835,6 @@ Most often you should be able to get what you need out of use of
 L<C<txn()>|/"txn"> and L<C<svp()>|/"svp">, but sometimes you just need the
 finer control. In those cases, take advantage of the driver object to keep
 your use of the API universal across database back-ends.
-
-=begin comment
-
-These are deprecated:
-
-=head3 C<do>
-
-=head3 C<txn_do>
-
-=head3 C<svp_do>
-
-=head3 C<clear_cache>
-
-=end comment
 
 =head1 See Also
 

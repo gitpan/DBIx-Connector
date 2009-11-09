@@ -9,13 +9,14 @@ use File::Spec::Functions qw(catdir splitdir);
 my $CLASS;
 my @drivers;
 BEGIN {
-    $CLASS = 'DBIx::Connector';
-    my $dir = catdir qw(lib DBIx Connector Driver);
+    $CLASS   = 'DBIx::Connector';
+    my $dir  = catdir qw(lib DBIx Connector Driver);
+    my $qdir = quotemeta $dir;
     find {
         no_chdir => 1,
         wanted   => sub {
             s/[.]pm$// or return;
-            s{^$dir/?}{};
+            s{^$qdir/?}{};
             push @drivers, "$CLASS\::Driver::" . join( '::', splitdir $_);
         }
     }, $dir;
@@ -32,9 +33,6 @@ can_ok $CLASS, qw(
     connected
     disconnect
     DESTROY
-    do
-    txn_do
-    svp_do
 );
 
 # Test the drivers.

@@ -8,7 +8,7 @@ build_requires:
   Test::More: 0.88
 configure_requires:
   Module::Build: 0.30
-generated_by: 'Module::Build version 0.3504'
+generated_by: 'Module::Build version 0.3505'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -17,26 +17,28 @@ name: DBIx-Connector
 provides:
   DBIx::Connector:
     file: lib/DBIx/Connector.pm
-    version: 0.30
+    version: 0.31
   DBIx::Connector::Driver:
     file: lib/DBIx/Connector/Driver.pm
-    version: 0.30
+    version: 0.31
   DBIx::Connector::Driver::MSSQL:
     file: lib/DBIx/Connector/Driver/MSSQL.pm
-    version: 0.30
+    version: 0.31
   DBIx::Connector::Driver::Oracle:
     file: lib/DBIx/Connector/Driver/Oracle.pm
-    version: 0.30
+    version: 0.31
   DBIx::Connector::Driver::Pg:
     file: lib/DBIx/Connector/Driver/Pg.pm
-    version: 0.30
+    version: 0.31
   DBIx::Connector::Driver::SQLite:
     file: lib/DBIx/Connector/Driver/SQLite.pm
+    version: 0.31
   DBIx::Connector::Driver::mysql:
     file: lib/DBIx/Connector/Driver/mysql.pm
-    version: 0.30
+    version: 0.31
   DBIx::Connector::Proxy:
     file: lib/DBIx/Connector.pm
+    version: 0.31
 recommends:
   Test::Pod: 1.20
   Test::Pod::Coverage: 1.06
@@ -48,4 +50,4 @@ resources:
   homepage: http://search.cpan.org/dist/DBIx-Connector/
   license: http://dev.perl.org/licenses/
   repository: http://github.com/theory/dbix-connector/tree/
-version: 0.30
+version: 0.31
