@@ -6,7 +6,7 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 my $die = sub { die @_ };
 
@@ -76,7 +76,9 @@ sub connected {
     return $self->driver->ping($dbh);
 }
 
-# Returns true if there is a database handle and the PID and TID have not
+sub in_txn { !shift->{_dbh}->FETCH('AutoCommit') }
+
+# returns true if there is a database handle and the PID and TID have not
 # changed and the handle's Active attribute is true.
 sub _seems_connected {
     my $self = shift;
@@ -276,7 +278,7 @@ sub svp {
 
 PROXY: {
     package DBIx::Connector::Proxy;
-    our $VERSION = '0.32';
+    our $VERSION = '0.33';
 
     sub new {
         my ($class, $conn, $mode) = @_;
@@ -434,7 +436,7 @@ Instead of this:
 
 Try this:
 
-  $conn->run(sub { $_->do($query) });
+  $conn->run(sub { $_->do($query) }); # returns retval from the sub {...}
 
 The difference is that the C<run()> optimistically assumes that an existing
 database handle is connected and executes the code reference without pinging
@@ -465,6 +467,16 @@ The supported modes are:
 Use them like so:
 
   $conn->run(ping => sub { $_->do($query) });
+
+As usual, the return the value of the block will be returned from the method
+call scalar or array context as appropriate. This makes them handy for things
+like constructing a statement handle:
+
+  my $sth = $conn->run(fixup => sub {
+      my $sth = $_->prepare('SELECT isbn, title, rating FROM books');
+      $sth->execute;
+      $sth;
+  });
 
 In C<ping> mode, C<run()> will ping the database I<before> running the block.
 This is similar to what L<Apache::DBI|Apache::DBI> and L<DBI|DBI>'s
@@ -597,7 +609,8 @@ blocks.
   $conn->run(ping => sub { $_->do($query) });
 
 Simply executes the block, setting C<$_> to and passing in the database
-handle.
+handle. Returns the value returned by the block in scalar or array context as
+appropriate.
 
 An optional first argument sets the connection mode, and may be one of
 C<ping>, C<fixup>, or C<no_ping> (the default). See L</"Connection Modes"> for
@@ -641,6 +654,7 @@ C<svp()> block.
 Starts a transaction, executes the block block, setting C<$_> to and passing
 in the database handle, and commits the transaction. If the block throws an
 exception, the transaction will be rolled back and the exception re-thrown.
+Returns the value returned by block in scalar or array context as appropriate.
 
 An optional first argument sets the connection mode, and may be one of
 C<ping>, C<fixup>, or C<no_ping> (the default). In the case of C<fixup> mode,
@@ -656,10 +670,12 @@ doing lots of non-database processing.
 
 =head3 C<svp>
 
-Executes a code block within the scope of a database savepoint. You can think
-of savepoints as a kind of subtransaction. What this means is that you can
-nest your savepoints and recover from failures deeper in the nest without
-throwing out all changes higher up in the nest. For example:
+Executes a code block within the scope of a database savepoint. Returns the
+value returned by the block in scalar or array context as appropriate.
+
+You can think of savepoints as a kind of subtransaction. What this means is
+that you can nest your savepoints and recover from failures deeper in the nest
+without throwing out all changes higher up in the nest. For example:
 
   $conn->txn(fixup => sub {
       my $dbh = shift;
@@ -786,6 +802,22 @@ Returns true if currently connected to the database and false if it's not. You
 probably won't need to bother with this method; DBIx::Connector uses it
 internally to determine whether or not to create a new connection to the
 database before returning a handle from C<dbh()>.
+
+=head3 C<in_txn>
+
+  if ( $conn->in_txn ) {
+     say 'Transacting!';
+  }
+
+Returns true if the connection is in a transaction. For example, inside a
+C<txn()> block it would return true. It will also work if you use the DBI API
+to manage transactions (i.e., C<begin_work()> or C<AutoCommit>.
+
+Essentially, this is just sugar for:
+
+  $con->run( no_ping => sub { !$_->{AutoCommit} } );
+
+But without the overhead of the code reference.
 
 =head3 C<disconnect>
 
