@@ -2,7 +2,7 @@ package DBIx::Connector::Driver;
 
 use strict;
 use warnings;
-our $VERSION = '0.33';
+our $VERSION = '0.34';
 
 DRIVERS: {
     my %DRIVERS;
@@ -176,7 +176,7 @@ It is based on code written by:
 
 =head1 Copyright and License
 
-Copyright (c) 2009 David E. Wheeler. Some Rights Reserved.
+Copyright (c) 2009-2010 David E. Wheeler. Some Rights Reserved.
 
 This module is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself.
