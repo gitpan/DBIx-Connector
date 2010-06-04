@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 57;
+use Test::More tests => 86;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -132,3 +132,72 @@ ok $conn->mode('fixup'), 'Se mode to "fixup"';
 $conn->svp(sub {
     is $conn->mode, 'fixup', 'Mode should implicitly be "fixup"'
 });
+
+NOEXIT: {
+    no warnings;
+
+    $driver->mock(begin_work => sub { shift });
+    my $keyword;
+    $driver->mock(commit => sub {
+        pass "Commit should be called when returning via $keyword"
+    });
+
+    # Make sure we don't exit the app via `next` or `last`.
+    for my $mode qw(ping no_ping fixup) {
+        $conn->mode($mode);
+
+        $keyword = 'next';
+        ok !$conn->svp(sub { next }), "Return via $keyword should fail";
+
+        $keyword = 'last';
+        ok !$conn->svp(sub { last }), "Return via $keyword should fail";
+    }
+}
+
+# Have the rollback_to die.
+my $dbi_mock = Test::MockModule->new(ref $dbh, no_auto => 1);
+$dbi_mock->mock(begin_work => undef );
+$dbi_mock->mock(rollback   => undef );
+$driver->mock( rollback_to => sub { die 'ROLLBACK TO WTF' });
+$dbh->{AutoCommit} = 0; # Ensure we run a savepoint.
+eval { $conn->svp(sub { die 'Savepoint WTF' }) };
+
+ok my $err = $@, 'We should have died';
+isa_ok $err, 'DBIx::Connector::SvpRollbackError', 'The exception';
+like $err, qr/Savepoint aborted: Savepoint WTF/, 'Should have the savepoint error';
+like $err, qr/Savepoint rollback failed: ROLLBACK TO WTF/,
+    'Should have the savepoint rollback error';
+like $err->rollback_error, qr/ROLLBACK TO WTF/, 'Should have rollback error';
+like $err->error, qr/Savepoint WTF/, 'Should have savepoint error';
+
+# Try a nested savepoint.
+eval { $conn->svp(sub {
+    $conn->svp(sub { die 'Nested WTF' });
+}) };
+
+ok $err = $@, 'We should have died again';
+isa_ok $err, 'DBIx::Connector::SvpRollbackError', 'The exception';
+like $err->rollback_error, qr/ROLLBACK TO WTF/, 'Should have rollback error';
+like $err->error, qr/Nested WTF/, 'Should have nested savepoint error';
+
+# Now try a savepoint rollback failure *and* a transaction rollback failure.
+$dbi_mock->mock(rollback => sub { die 'Rollback WTF' } );
+$dbh->{AutoCommit} = 1;
+$ENV{FOO} = 1;
+eval {
+    $conn->txn(sub {
+        local $dbh->{AutoCommit} = 0;
+        $conn->svp(sub { die 'Savepoint WTF' });
+    })
+};
+
+ok $err = $@, 'We should have died';
+isa_ok $err, 'DBIx::Connector::TxnRollbackError', 'The exception';
+like $err->rollback_error, qr/Rollback WTF/, 'Should have rollback error';
+isa_ok $err->error, 'DBIx::Connector::SvpRollbackError', 'The savepoint errror';
+like $err, qr/Transaction aborted: Savepoint aborted: Savepoint WTF/,
+    'Stringification should have savepoint errror';
+like $err, qr/Savepoint rollback failed: ROLLBACK TO WTF/,
+    'Stringification should have savepoint rollback failure';
+like $err, qr/Transaction rollback failed: Rollback WTF/,
+    'Stringification should have transaction rollback failure';

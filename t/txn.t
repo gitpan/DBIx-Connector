@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 75;
+use Test::More tests => 98;
 #use Test::More 'no_plan';
 use Test::MockModule;
 
@@ -175,3 +175,52 @@ ok $conn->mode('fixup'), 'Se mode to "fixup"';
 $conn->txn(sub {
     is $conn->mode, 'fixup', 'Mode should implicitly be "fixup"'
 });
+
+NOEXIT: {
+    no warnings;
+
+    my $dr_mock = Test::MockModule->new(ref $driver, no_auto => 1);
+    $dr_mock->mock(begin_work => sub { shift });
+    my $keyword;
+    $dr_mock->mock(commit => sub {
+        pass "Commit should be called when returning via $keyword"
+    });
+
+    # Make sure we don't exit the app via `next` or `last`.
+    for my $mode qw(ping no_ping fixup) {
+        $conn->mode($mode);
+
+        $keyword = 'next';
+        ok !$conn->txn(sub { next }), "Return via $keyword should fail";
+
+        $keyword = 'last';
+        ok !$conn->txn(sub { last }), "Return via $keyword should fail";
+    }
+}
+
+# Have the rollback die.
+$dbi_mock->mock(begin_work => undef );
+$dbi_mock->mock(rollback => sub { die 'Rollback WTF' });
+
+eval { $conn->txn(sub {
+    die 'Transaction WTF';
+}) };
+
+ok my $err = $@, 'We should have died';
+isa_ok $err, 'DBIx::Connector::TxnRollbackError', 'The exception';
+like $err, qr/Transaction aborted: Transaction WTF/, 'Should have the transaction error';
+like $err, qr/Transaction rollback failed: Rollback WTF/, 'Should have the rollback error';
+like $err->rollback_error, qr/Rollback WTF/, 'Should have rollback error';
+like $err->error, qr/Transaction WTF/, 'Should have transaction error';
+
+# Try a nested transaction.
+eval { $conn->txn(sub {
+    local $_->{AutoCommit} = 0;
+    $conn->txn(sub { die 'Nested WTF' });
+}) };
+
+ok $err = $@, 'We should have died again';
+isa_ok $err, 'DBIx::Connector::TxnRollbackError', 'The exception';
+like $err->rollback_error, qr/Rollback WTF/, 'Should have rollback error';
+like $err->error, qr/Nested WTF/, 'Should have nested transaction error';
+ok !ref $err->error, 'The nested error should not be an object';
