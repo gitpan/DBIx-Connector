@@ -6,7 +6,7 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.35';
+our $VERSION = '0.40';
 
 my $die = sub { die @_ };
 
@@ -31,6 +31,9 @@ sub _connect {
             DBI->connect( @{ $self->{_args} } );
         }
     };
+    $self->{_dbh}->STORE(AutoInactiveDestroy => 1) if DBI->VERSION > 1.613 && (
+        @{ $self->{_args} } < 4 || ! exists $self->{_args}[3]{AutoInactiveDestroy}
+    );
     $self->{_pid} = $$;
     $self->{_tid} = threads->tid if $INC{'threads.pm'};
 
@@ -73,7 +76,6 @@ sub connected {
     my $self = shift;
     return unless $self->_seems_connected;
     my $dbh = $self->{_dbh} or return;
-    local $dbh->{RaiseError} = 1; # be on the safe side
     return $self->driver->ping($dbh);
 }
 
@@ -97,22 +99,24 @@ sub _seems_connected {
     } elsif ( $self->{_pid} != $$ ) {
         # We've forked, so prevent the parent process handle from touching the
         # DB on DESTROY. Here in the child process, that could really screw
-        # things up.
+        # things up. This is superfluous when AutoInactiveDestroy is set, but
+        # harmless. It's better to be proactive anyway.
         $dbh->STORE(InactiveDestroy => 1);
         return;
     }
-    # Use FETCH() to avoid death when called from DESTROY().
+    # Use FETCH() to avoid death when called from during global destruction.
     return $dbh->FETCH('Active') ? $dbh : undef;
 }
 
 sub disconnect {
     my $self = shift;
-    return $self unless $self->connected;
-    my $dbh = $self->{_dbh};
-    # Use FETCH() to avoid death when called from DESTROY().
-    $self->driver->rollback($dbh) unless $dbh->FETCH('AutoCommit');
-    $dbh->disconnect;
-    $self->{_dbh} = undef;
+    if (my $dbh = $self->{_dbh}) {
+        # Some databases need this to stop spewing warnings, according to
+        # DBIx::Class::Storage::DBI.
+        $dbh->STORE(CachedKids => {});
+        $dbh->disconnect;
+        $self->{_dbh} = undef;
+    }
     return $self;
 }
 
@@ -288,7 +292,7 @@ sub svp {
 
 PROXY: {
     package DBIx::Connector::Proxy;
-    our $VERSION = '0.35';
+    our $VERSION = '0.40';
 
     sub new {
         require Carp;
@@ -333,7 +337,7 @@ sub _exec {
     local $_ = $dbh;
     # Block prevents exiting via next or last, otherwise no commit/rollback.
     NOEXIT: {
-        return $wantarray ? $code->($dbh) : ($code->($dbh))[-1]
+        return $wantarray ? $code->($dbh) : scalar $code->($dbh)
             if defined $wantarray;
         return $code->($dbh);
     }
@@ -384,7 +388,8 @@ asked!
 
 Like Apache::DBI, but unlike C<connect_cached()>, DBIx::Connector create a new
 database connection if a new process has been C<fork>ed. This happens all the
-time under L<mod_perl>, in L<POE> applications, and elsewhere.
+time under L<mod_perl>, in L<POE> applications, and elsewhere. Works best with
+DBI 1.614 and higher.
 
 =item * Thread Safety
 
@@ -434,9 +439,10 @@ connection and then keep it around for as long as you need it, like so:
 
 You can store the connection somewhere in your app where you can easily access
 it, and for as long as it remains in scope, it will try its hardest to
-maintain a database connection. Even across C<fork>s and new threads, and even
-calls to C<< $conn->dbh->disconnect >>. When you don't need it anymore, let it
-go out of scope and the database connection will be closed.
+maintain a database connection. Even across C<fork>s (especially with DBI
+1.614 and higher) and new threads, and even calls to
+C<< $conn->dbh->disconnect >>. When you don't need it anymore, let it go out
+of scope and the database connection will be closed.
 
 The upshot is that your code is responsible for hanging onto a connection for
 as long as it needs it. There is no magical connection caching like in
@@ -489,9 +495,10 @@ Or set up a default mode via the C<mode()> accessor:
   $conn->mode('fixup');
   $conn->run(sub { $_->do($query) });
 
-As usual, the return value of the block will be returned from the method call
-in scalar or array context as appropriate. This makes them handy for things
-like constructing a statement handle:
+The return value of the block will be returned from the method call in scalar
+or array context as appropriate, and the block can use C<wantarray> to
+determine the context. Returning the value makes them handy for things like
+constructing a statement handle:
 
   my $sth = $conn->run(fixup => sub {
       my $sth = $_->prepare('SELECT isbn, title, rating FROM books');
@@ -700,7 +707,7 @@ blocks.
 
 Simply executes the block, setting C<$_> to and passing in the database
 handle. Returns the value returned by the block in scalar or array context as
-appropriate.
+appropriate (and the block can use C<wantarray> to decide what to do).
 
 An optional first argument sets the connection mode, overriding that set in
 the C<mode()> accessor, and may be one of C<ping>, C<fixup>, or C<no_ping>
@@ -745,7 +752,7 @@ Starts a transaction, executes the block, setting C<$_> to and passing in the
 database handle, and commits the transaction. If the block throws an
 exception, the transaction will be rolled back and the exception re-thrown.
 Returns the value returned by the block in scalar or array context as
-appropriate.
+appropriate (and the block can use C<wantarray> to decide what to do).
 
 An optional first argument sets the connection mode, overriding that set in
 the C<mode()> accessor, and may be one of C<ping>, C<fixup>, or C<no_ping>
@@ -765,7 +772,8 @@ processing.
 
 Executes a code block within the scope of a database savepoint if your
 database supports them. Returns the value returned by the block in scalar or
-array context as appropriate.
+array context as appropriate (and the block can use C<wantarray> to decide
+what to do).
 
 You can think of savepoints as a kind of subtransaction. What this means is
 that you can nest your savepoints and recover from failures deeper in the nest
@@ -940,9 +948,8 @@ But without the overhead of the code reference or connection checking.
 
   $conn->disconnect;
 
-Disconnects from the database. If a transaction is in process it will be
-rolled back. DBIx::Connector uses this method internally in its C<DESTROY>
-method to make sure that things are kept tidy.
+Disconnects from the database. DBIx::Connector uses this method internally in
+its C<DESTROY> method to make sure that things are kept tidy.
 
 =head3 C<driver>
 
@@ -994,11 +1001,13 @@ universal across database back-ends.
 
 =head1 Support
 
-This module is managed in an open GitHub repository,
-L<http://github.com/theory/dbix-connector/>. Feel free to fork and contribute,
-or to clone L<git://github.com/theory/dbix-connector.git> and send patches!
+This module is managed in an open
+L<GitHub repository|http://github.com/theory/dbix-connector/>. Feel free to
+fork and contribute, or to clone L<git://github.com/theory/dbix-connector.git>
+and send patches!
 
-Please file bug reports at L<http://github.com/theory/dbix-connector/issues/>.
+Found a bug? Please L<post|http://github.com/theory/dbix-connector/issues> or
+L<email|mailto:bug-dbix-connector@rt.cpan.org> a report!
 
 =head1 Authors
 

@@ -1,5 +1,34 @@
 Revision history for Perl extension DBIx::Connector.
 
+0.40  2010-09-17T18:44:01
+      - The code refs passed to `run()`, `txn()`, and `svp()` now know their
+        contexts, so that `wantarray` can be used to decide what to return.
+        Patch from Yaroslav Korshak.
+      - Set `AutoInactiveDestroy` on connect with DBI 1.614 and higher, unless
+        it is explicitly set in the attributes. This makes things even safer
+        in a forking environment, preventing a parent process from getting
+        disconnected when a child exits without using the connection. The
+        reports from Peter Rabbitson and Aran Deltac and subsequent discussion
+        with Tim Bunce led to the addition of this attribute in DBI 1.614,
+        which is now the recommended version of DBI.
+      - `DESTROY()` no longer pings the database or rolls back transactions.
+        It now simply calls `disconnect`. This avoids warnings during global
+        destruction, and doesn't seem necessary anyway, as the DBI does these
+        things during global destruction (and always has). Thanks to Matt
+        Trout for the heads-up.
+      - `DESTROY()` now clears `CachedKids`, following the precedent of
+        DBIx::Class. May not be needed for recent-ish drivers, but seems
+        harmless and it's nice to avoid warnings were possible. Reported by
+        Matt Trout.
+      - The `connected()` method no longer `local`ly sets `RaiseError`. It
+        instead leaves that to the drivers (currenly only Driver::Oracle).
+      - The exception classes `DBIx::Connector::TxnRollbackError` and
+        `DBIx::Connector::SvpRollbackError` now use `our @ISA =` instead of
+        `use base` to inherit from `DBIx::Connector::RollbackError. This is to
+        avoid failures from mod_perl restarts. Suggested by Matt Trout.
+      - Require Test::Pod 1.41 for POD tests so that `L<text|url>` is
+        considered valid.
+
 0.35 2010-06-04T00:32:02
       - Added a scoping block around the execution of the blocks passed to
         `run()`, `txn()`, and `svp()`. This prevents an app from exiting when

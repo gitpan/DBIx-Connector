@@ -2,7 +2,7 @@ package DBIx::Connector::Driver;
 
 use strict;
 use warnings;
-our $VERSION = '0.35';
+our $VERSION = '0.40';
 
 DRIVERS: {
     my %DRIVERS;
@@ -89,13 +89,12 @@ ROLLBACKERR: {
     }
 
     package DBIx::Connector::TxnRollbackError;
-    use base 'DBIx::Connector::RollbackError';
+    our @ISA = ('DBIx::Connector::RollbackError');
     sub _label    { 'Transaction' }
 
     package DBIx::Connector::SvpRollbackError;
-    use base 'DBIx::Connector::RollbackError';
+    our @ISA = ('DBIx::Connector::RollbackError');
     sub _label    { 'Savepoint' }
-
 }
 
 1;
