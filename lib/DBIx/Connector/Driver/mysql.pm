@@ -3,7 +3,7 @@ package DBIx::Connector::Driver::mysql;
 use strict;
 use warnings;
 use base 'DBIx::Connector::Driver';
-our $VERSION = '0.40';
+our $VERSION = '0.41';
 
 sub savepoint {
     my ($self, $dbh, $name) = @_;
@@ -30,7 +30,7 @@ DBIx::Connector::Driver::mysql - MySQL-specific connection interface
 =head1 Description
 
 This subclass of L<DBIx::Connector::Driver|DBIx::Connector::Driver> provides
-PostgreSQL-specific implementations of the following methods:
+MySQL-specific implementations of the following methods:
 
 =over
 

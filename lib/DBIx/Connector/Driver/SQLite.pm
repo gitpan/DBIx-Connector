@@ -3,7 +3,7 @@ package DBIx::Connector::Driver::SQLite;
 use strict;
 use warnings;
 use base 'DBIx::Connector::Driver';
-our $VERSION = '0.40';
+our $VERSION = '0.41';
 
 BEGIN {
     # Only install support for savepoints if SQLite supports them.
@@ -38,7 +38,7 @@ DBIx::Connector::Driver::SQLite - SQLite-specific connection interface
 =head1 Description
 
 This subclass of L<DBIx::Connector::Driver|DBIx::Connector::Driver> provides
-PostgreSQL-specific implementations of the following methods:
+SQLite-specific implementations of the following methods:
 
 =over
 
