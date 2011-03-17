@@ -6,7 +6,7 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 my $die = sub { die @_ };
 
@@ -24,7 +24,7 @@ sub DESTROY { $_[0]->disconnect if $_[0]->{_dond} }
 
 sub _connect {
     my $self = shift;
-    $self->{_dbh} = do {
+    my $dbh = $self->{_dbh} = do {
         if ($INC{'Apache/DBI.pm'} && $ENV{MOD_PERL}) {
             local $DBI::connect_via = 'connect'; # Disable Apache::DBI.
             DBI->connect( @{ $self->{_args} } );
@@ -32,16 +32,22 @@ sub _connect {
             DBI->connect( @{ $self->{_args} } );
         }
     };
-    $self->{_dbh}->STORE(AutoInactiveDestroy => 1) if DBI->VERSION > 1.613 && (
-        @{ $self->{_args} } < 4 || ! exists $self->{_args}[3]{AutoInactiveDestroy}
+
+    # Modify default values.
+    $dbh->STORE(AutoInactiveDestroy => 1) if DBI->VERSION > 1.613 && (
+        @{ $self->{_args} } < 4 || !exists $self->{_args}[3]{AutoInactiveDestroy}
     );
+
+    $dbh->STORE(RaiseError => 1) if @{ $self->{_args} } < 4 || (
+        !exists $self->{_args}[3]{RaiseError} && !exists $self->{_args}[3]{HandleError}
+    );
+
+    # Where are we?
     $self->{_pid} = $$;
     $self->{_tid} = threads->tid if $INC{'threads.pm'};
 
-    # Set the driver.
-    $self->driver unless $self->{driver};
-
-    return $self->{_dbh};
+    # Set up the driver and go!
+    return $self->driver->_connect($dbh, @{ $self->{_args} });
 }
 
 sub driver {
@@ -336,7 +342,7 @@ sub svp {
 
 PROXY: {
     package DBIx::Connector::Proxy;
-    our $VERSION = '0.42';
+    our $VERSION = '0.43';
 
     sub new {
         require Carp;
@@ -400,7 +406,9 @@ DBIx::Connector - Fast, safe DBI connection and transaction management
   use DBIx::Connector;
 
   # Create a connection.
-  my $conn = DBIx::Connector->new($dsn, $username, $password, \%attr );
+  my $conn = DBIx::Connector->new($dsn, $username, $password, {
+      RaiseError => 1,
+  });
 
   # Get the database handle and do something with it.
   my $dbh  = $conn->dbh;
@@ -584,10 +592,13 @@ won't be sorry, I promise.
 
 Another optional feature of the execution methods L<C<run()>|/"run">,
 L<C<txn()>|/"txn">, and L<C<svp()>|/"svp"> is integrated exception handling.
-If an exception is thrown by a block passed to one of these methods, by
-default it will simply be propagated back to you (after any necessary
-transaction or savepoint rollbacks). You can of course use the standard Perl
-exception handling to deal with this situation:
+This is especially valuable if the DBI C<RaiseError> attribute is true, or if
+the C<HandleError> attribute always throws exceptions (as the
+L<Exception::Class::DBI> handler does, for example). If an exception is thrown
+by a block passed to one of these methods, by default it will simply be
+propagated back to you (after any necessary transaction or savepoint
+rollbacks). You can of course use the standard Perl exception handling to deal
+with this situation:
 
   eval {
       $conn->run(sub { die 'WTF!' });
@@ -596,30 +607,11 @@ exception handling to deal with this situation:
       warn "Caught exception: $_";
   }
 
-Better is to use an exception handling module like L<Try::Tiny> to handle
-exceptions more cleanly:
-
-  use Try::Tiny;
-  try {
-      $conn->run(sub { die 'WTF!' });
-  } catch {
-      warn "Caught exception: $_";
-  };
-
 Best of all is to simply pass a C<catch> code block to the execution method:
 
   $conn->run(sub {
       die 'WTF!';
-  }, sub {
-      warn "Caught exception: $_";
-  });
-
-Because it's a simple code reference, you can even use the sugar function
-C<catch> from L<Try::Tiny>:
-
-  $conn->run(sub {
-      die 'WTF!';
-  }, catch {
+  }, catch => sub {
       warn "Caught exception: $_";
   });
 
@@ -707,10 +699,49 @@ And now for the nitty-gritty.
 
 =head3 C<new>
 
-  my $conn = DBIx::Connector->new($dsn, $username, $password, \%attr);
+  my $conn = DBIx::Connector->new($dsn, $username, $password, {
+      RaiseError => 1,
+  });
 
 Constructs and returns a DBIx::Connector object. The supported arguments are
-exactly the same as those supported by the L<DBI>.
+exactly the same as those supported by the L<DBI>. Default values for those
+parameters vary from the DBI as follows:
+
+=over
+
+=item C<RaiseError>
+
+Defaults to true if unspecified, and if C<HandleError> is unspecified. Use of
+the C<RaiseError> attribute, or a C<HandleError> attribute that always throws
+exceptions (such as that provided by L<Exception::Class::DBI>) is required for
+the exception-handling functionality of L<C<run()>|/"run">,
+L<C<txn()>|/"txn">, and L<C<svp()>|/"svp"> to work properly. Their explicit
+use is therefor recommended if for proper error handling with these execution
+methods.
+
+=item C<AutoInactiveDestroy>
+
+Added in L<DBI> 1.613. Defaults to true if unspecified. This is important for
+safe disconnects across forking processes.
+
+=back
+
+Other attributes may be modified by individual drivers. See the documentation
+for the drivers for details:
+
+=over
+
+=item L<DBIx::Connector::Driver::MSSQL>
+
+=item L<DBIx::Connector::Driver::Oracle>
+
+=item L<DBIx::Connector::Driver::Pg>
+
+=item L<DBIx::Connector::Driver::SQLite>
+
+=item L<DBIx::Connector::Driver::mysql>
+
+=back
 
 =head2 Class Method
 

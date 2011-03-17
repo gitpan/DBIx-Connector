@@ -26,3 +26,4 @@ t/txn.t
 t/txn_fixup.t
 t/txn_ping.t
 t/with.t
+META.json

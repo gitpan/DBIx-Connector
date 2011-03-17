@@ -2,7 +2,7 @@ package DBIx::Connector::Driver;
 
 use strict;
 use warnings;
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 DRIVERS: {
     my %DRIVERS;
@@ -16,6 +16,11 @@ DRIVERS: {
             bless { driver => $driver } => $class;
         };
     }
+}
+
+sub _connect {
+    my ($self, $dbh, $dsn, $username, $password, $attrs) = @_;
+    $dbh;
 }
 
 sub ping {
