@@ -1,5 +1,9 @@
 Revision history for Perl extension DBIx::Connector.
 
+0.44  2011-03-20T01:04:59
+      - Fixed bug with the MySQL driver introduced by the auto-reconnection
+        fix in 0.43. Sorry for the lame mistake. [Lee Aylward]
+
 0.43  2011-03-17T20:03:16
       - DBIx::Connector now sets the DBI `RaiseError` parameter to true in
         `new()` if neither it nor `HandleError` has been specified. This is to

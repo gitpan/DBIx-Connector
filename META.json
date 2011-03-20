@@ -41,35 +41,35 @@
    "provides" : {
       "DBIx::Connector" : {
          "file" : "lib/DBIx/Connector.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::Driver" : {
          "file" : "lib/DBIx/Connector/Driver.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::Driver::MSSQL" : {
          "file" : "lib/DBIx/Connector/Driver/MSSQL.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::Driver::Oracle" : {
          "file" : "lib/DBIx/Connector/Driver/Oracle.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::Driver::Pg" : {
          "file" : "lib/DBIx/Connector/Driver/Pg.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::Driver::SQLite" : {
          "file" : "lib/DBIx/Connector/Driver/SQLite.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::Driver::mysql" : {
          "file" : "lib/DBIx/Connector/Driver/mysql.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::Proxy" : {
          "file" : "lib/DBIx/Connector.pm",
-         "version" : "0.43"
+         "version" : "0.44"
       },
       "DBIx::Connector::RollbackError" : {
          "file" : "lib/DBIx/Connector/Driver.pm",
@@ -97,5 +97,5 @@
          "url" : "http://github.com/theory/dbix-connector/tree/"
       }
    },
-   "version" : "0.43"
+   "version" : "0.44"
 }
