@@ -6,7 +6,7 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.44';
+our $VERSION = '0.45';
 
 my $die = sub { die @_ };
 
@@ -104,7 +104,10 @@ sub disconnect_on_destroy {
     $self->{_dond} = !!shift;
 }
 
-sub in_txn { !shift->{_dbh}->FETCH('AutoCommit') }
+sub in_txn {
+    my $dbh = shift->{_dbh} or return;
+    return !$dbh->FETCH('AutoCommit');
+}
 
 # returns true if there is a database handle and the PID and TID have not
 # changed and the handle's Active attribute is true.
@@ -173,15 +176,18 @@ sub _fixup_run {
     my ($self, $code, $errh) = @_;
     my $dbh  = $self->_dbh;
 
-    my @ret;
+    my ($err, @ret);
     my $wantarray = wantarray;
     if ($self->{_in_run} || !$dbh->FETCH('AutoCommit')) {
-        @ret = _exec( $dbh, $code, $wantarray );
+        TRY: {
+            @ret = eval { _exec( $dbh, $code, $wantarray ) };
+            $err = $@;
+        }
+        if ($err) { return $errh->($err) for $err }
         return wantarray ? @ret : $ret[0];
     }
 
     local $self->{_in_run} = 1;
-    my $err;
     TRY: {
         local $@;
         @ret = eval { _exec( $dbh, $code, $wantarray ) };
@@ -224,7 +230,8 @@ sub _txn_run {
         $dbh = $self->{_mode} eq 'ping' ? $self->dbh : $self->_dbh;
         unless ($dbh->FETCH('AutoCommit')) {
             local $self->{_in_run}  = 1;
-            @ret = _exec( $dbh, $code, $wantarray );
+            @ret = eval { _exec( $dbh, $code, $wantarray ) };
+            if ($err = $@) { return $errh->($err) for $err }
             return $wantarray ? @ret : $ret[0];
         }
         # If we get here, restore the original error.
@@ -256,15 +263,18 @@ sub _txn_fixup_run {
     my $driver = $self->driver;
 
     my $wantarray = wantarray;
-    my @ret;
+    my ($err, @ret);
     local $self->{_in_run}  = 1;
 
     unless ($dbh->FETCH('AutoCommit')) {
-        @ret = _exec( $dbh, $code, $wantarray );
-        return $wantarray ? @ret : $ret[0];
+        TRY: {
+            @ret = eval { _exec( $dbh, $code, $wantarray ) };
+            $err = $@;
+        }
+        if ($err) { return $errh->($err) for $err }
+        return wantarray ? @ret : $ret[0];
     }
 
-    my $err;
     TRY: {
         local $@;
         eval {
@@ -342,7 +352,7 @@ sub svp {
 
 PROXY: {
     package DBIx::Connector::Proxy;
-    our $VERSION = '0.44';
+    our $VERSION = '0.45';
 
     sub new {
         require Carp;
@@ -408,6 +418,7 @@ DBIx::Connector - Fast, safe DBI connection and transaction management
   # Create a connection.
   my $conn = DBIx::Connector->new($dsn, $username, $password, {
       RaiseError => 1,
+      AutoCommit => 1,
   });
 
   # Get the database handle and do something with it.
@@ -701,6 +712,7 @@ And now for the nitty-gritty.
 
   my $conn = DBIx::Connector->new($dsn, $username, $password, {
       RaiseError => 1,
+      AutoCommit => 1,
   });
 
 Constructs and returns a DBIx::Connector object. The supported arguments are
@@ -713,8 +725,8 @@ parameters vary from the DBI as follows:
 
 Defaults to true if unspecified, and if C<HandleError> is unspecified. Use of
 the C<RaiseError> attribute, or a C<HandleError> attribute that always throws
-exceptions (such as that provided by L<Exception::Class::DBI>) is required for
-the exception-handling functionality of L<C<run()>|/"run">,
+exceptions (such as that provided by L<Exception::Class::DBI>), is required
+for the exception-handling functionality of L<C<run()>|/"run">,
 L<C<txn()>|/"txn">, and L<C<svp()>|/"svp"> to work properly. Their explicit
 use is therefor recommended if for proper error handling with these execution
 methods.
@@ -725,6 +737,10 @@ Added in L<DBI> 1.613. Defaults to true if unspecified. This is important for
 safe disconnects across forking processes.
 
 =back
+
+In addition, explicitly setting C<AutoCommit> to true is strongly recommended
+if you plan to use L<C<txn()>|/"txn"> or L<C<svp()>|/"svp">, as otherwise you
+won't get the transactional scoping behavior of those two methods.
 
 Other attributes may be modified by individual drivers. See the documentation
 for the drivers for details:
