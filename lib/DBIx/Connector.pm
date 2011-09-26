@@ -6,7 +6,7 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.46';
+our $VERSION = '0.47';
 
 my $die = sub { die @_ };
 
@@ -140,17 +140,13 @@ sub disconnect {
     return $self;
 }
 
-my %WARNED;
-
 sub _errh {
     return $die if !$_[0]
         || ($_[0] ne 'catch' && ref $_[0] ne 'CODE');
 
-    unless ($WARNED{+caller}++) {
-        require Carp && Carp::carp(
-            'Use of "catch" blocks has been deprecated as of DBIx::Connector 0.46. Please use Try::Tiny instead.'
-        );
-    }
+    require Carp && Carp::carp(
+        'Use of "catch" blocks has been deprecated as of DBIx::Connector 0.46. Please use Try::Tiny instead.'
+    );
 
     return $_[0]  eq 'catch' ? $_[1] : $_[0];
 }
@@ -360,7 +356,7 @@ sub svp {
 
 PROXY: {
     package DBIx::Connector::Proxy;
-    our $VERSION = '0.46';
+    our $VERSION = '0.47';
 
     sub new {
         require Carp;
