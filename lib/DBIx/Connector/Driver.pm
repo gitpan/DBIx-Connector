@@ -2,7 +2,7 @@ package DBIx::Connector::Driver;
 
 use strict;
 use warnings;
-our $VERSION = '0.47';
+our $VERSION = '0.50';
 
 DRIVERS: {
     my %DRIVERS;
@@ -58,7 +58,7 @@ sub _rollback_and_release {
     local $@;
     eval {
         $self->rollback_to($dbh, $name);
-        $self->rollback_release($dbh, $name);
+        $self->release($dbh, $name);
     };
     return $@ ? DBIx::Connector::SvpRollbackError->new(
         error          => $err,

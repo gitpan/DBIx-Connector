@@ -6,9 +6,7 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.47';
-
-my $die = sub { die @_ };
+our $VERSION = '0.50';
 
 sub new {
     my $class = shift;
@@ -140,73 +138,37 @@ sub disconnect {
     return $self;
 }
 
-sub _errh {
-    return $die if !$_[0]
-        || ($_[0] ne 'catch' && ref $_[0] ne 'CODE');
-
-    require Carp && Carp::carp(
-        'Use of "catch" blocks has been deprecated as of DBIx::Connector 0.46. Please use Try::Tiny instead.'
-    );
-
-    return $_[0]  eq 'catch' ? $_[1] : $_[0];
-}
-
 sub run {
     my $self = shift;
     my $mode = ref $_[0] eq 'CODE' ? $self->{_mode} : shift;
     local $self->{_mode} = $mode;
-    my $code = shift;
-    my $errh = &_errh;
-    return $self->_fixup_run($code, $errh) if $mode eq 'fixup';
-    return $self->_run($code, $errh);
+    return $self->_fixup_run(@_) if $mode eq 'fixup';
+    return $self->_run(@_);
   }
 
 sub _run {
-    my ($self, $code, $errh) = @_;
-    my $wantarray = wantarray;
-    my ($err, @ret);
-    TRY: {
-        local $@;
-        my $dbh = $self->{_mode} eq 'ping' ? $self->dbh : $self->_dbh;
-        local $self->{_in_run} = 1;
-        @ret = eval { _exec( $dbh, $code, $wantarray ) };
-        $err = $@;
-    }
-    if ($err) { return $errh->($err) for $err }
-    return $wantarray ? @ret : $ret[0];
+    my ($self, $code) = @_;
+    my $dbh = $self->{_mode} eq 'ping' ? $self->dbh : $self->_dbh;
+    local $self->{_in_run} = 1;
+    return _exec( $dbh, $code, wantarray );
 }
 
 sub _fixup_run {
-    my ($self, $code, $errh) = @_;
+    my ($self, $code) = @_;
     my $dbh  = $self->_dbh;
 
-    my ($err, @ret);
     my $wantarray = wantarray;
-    if ($self->{_in_run} || !$dbh->FETCH('AutoCommit')) {
-        TRY: {
-            @ret = eval { _exec( $dbh, $code, $wantarray ) };
-            $err = $@;
-        }
-        if ($err) { return $errh->($err) for $err }
-        return wantarray ? @ret : $ret[0];
-    }
+    return _exec( $dbh, $code, $wantarray )
+        if $self->{_in_run} || !$dbh->FETCH('AutoCommit');
 
     local $self->{_in_run} = 1;
-    TRY: {
-        local $@;
-        @ret = eval { _exec( $dbh, $code, $wantarray ) };
-        $err = $@;
-    }
+    local $@;
+    my @ret = eval { _exec( $dbh, $code, $wantarray ) };
 
-    if ($err) {
-        if ($self->connected) { return $errh->($err) for $err }
+    if (my $err = $@) {
+        die $err if $self->connected;
         # Not connected. Try again.
-        TRY: {
-            local $@;
-            @ret = eval { _exec( $self->_connect, $code, $wantarray ) };
-            $err = $@;
-        }
-        if ($err) { return $errh->($err) for $err }
+        return _exec( $self->_connect, $code, $wantarray, @_ );
     }
 
     return $wantarray ? @ret : $ret[0];
@@ -216,98 +178,70 @@ sub txn {
     my $self = shift;
     my $mode = ref $_[0] eq 'CODE' ? $self->{_mode} : shift;
     local $self->{_mode} = $mode;
-    my $code = shift;
-    my $errh = &_errh;
-    return $self->_txn_fixup_run($code, $errh) if $mode eq 'fixup';
-    return $self->_txn_run($code, $errh);
+    return $self->_txn_fixup_run(@_) if $mode eq 'fixup';
+    return $self->_txn_run(@_);
 }
 
 sub _txn_run {
-    my ($self, $code, $errh) = @_;
+    my ($self, $code) = @_;
     my $driver = $self->driver;
-
     my $wantarray = wantarray;
-    my ($dbh, $err, @ret);
-    my $orig_err = $@;
+    my $dbh = $self->{_mode} eq 'ping' ? $self->dbh : $self->_dbh;
 
-    TRY: {
-        $dbh = $self->{_mode} eq 'ping' ? $self->dbh : $self->_dbh;
-        unless ($dbh->FETCH('AutoCommit')) {
-            local $self->{_in_run}  = 1;
-            @ret = eval { _exec( $dbh, $code, $wantarray ) };
-            if ($err = $@) { return $errh->($err) for $err }
-            return $wantarray ? @ret : $ret[0];
-        }
-        # If we get here, restore the original error.
-        $@ = $orig_err;
+    unless ($dbh->FETCH('AutoCommit')) {
+        local $self->{_in_run}  = 1;
+        return _exec( $dbh, $code, $wantarray );
     }
 
-    TRY: {
-        local $@;
-        eval {
-            local $self->{_in_run}  = 1;
-            $driver->begin_work($dbh);
-            @ret = _exec( $dbh, $code, $wantarray );
-            $driver->commit($dbh);
-        };
-        $err = $@;
+    my @ret; local $@;
+    eval {
+        local $self->{_in_run}  = 1;
+        $driver->begin_work($dbh);
+        @ret = _exec( $dbh, $code, $wantarray );
+        $driver->commit($dbh);
     };
 
-    if ($err) {
+    if (my $err = $@) {
         $err = $driver->_rollback($dbh, $err);
-        return $errh->($err) for $err;
+        die $err;
     }
 
     return $wantarray ? @ret : $ret[0];
 }
 
 sub _txn_fixup_run {
-    my ($self, $code, $errh) = @_;
+    my ($self, $code) = @_;
     my $dbh    = $self->_dbh;
     my $driver = $self->driver;
 
     my $wantarray = wantarray;
-    my ($err, @ret);
     local $self->{_in_run}  = 1;
 
-    unless ($dbh->FETCH('AutoCommit')) {
-        TRY: {
-            @ret = eval { _exec( $dbh, $code, $wantarray ) };
-            $err = $@;
-        }
-        if ($err) { return $errh->($err) for $err }
-        return wantarray ? @ret : $ret[0];
-    }
+    return _exec( $dbh, $code, $wantarray ) unless $dbh->FETCH('AutoCommit');
 
-    TRY: {
+    my @ret; local $@;
+    eval {
+        $driver->begin_work($dbh);
+        @ret = _exec( $dbh, $code, $wantarray );
+        $driver->commit($dbh);
+    };
+
+    if (my $err = $@) {
+        if ($self->connected) {
+            $err = $driver->_rollback($dbh, $err);
+            die $err;
+        }
+        # Not connected. Try again.
         local $@;
+        $dbh = $self->_connect;
         eval {
             $driver->begin_work($dbh);
             @ret = _exec( $dbh, $code, $wantarray );
             $driver->commit($dbh);
         };
-        $err = $@;
-    }
-
-    if ($err) {
-        if ($self->connected) {
+        if ($err = $@) {
             $err = $driver->_rollback($dbh, $err);
-            return $errh->($err) for $err;
-        }
-        # Not connected. Try again.
-        TRY: {
-            local $@;
-            $dbh = $self->_connect;
-            eval {
-                $driver->begin_work($dbh);
-                @ret = _exec( $dbh, $code, $wantarray );
-                $driver->commit($dbh);
-            };
-            $err = $@;
-        }
-        if ($err) {
-            $err = $driver->_rollback($dbh, $err);
-            return $errh->($err) for $err;
+            die $err;
         }
     }
 
@@ -324,7 +258,6 @@ sub svp {
     my $mode = ref $_[0] eq 'CODE' ? $self->{_mode} : shift;
     local $self->{_mode} = $mode;
     my $code = shift;
-    my $errh = &_errh;
 
     my ($err, @ret);
     my $wantarray = wantarray;
@@ -348,52 +281,10 @@ sub svp {
         if ($self->connected) {
             $err = $driver->_rollback_and_release($dbh, $name, $err);
         }
-        return $errh->($err) for $err;
+        die $err;
     }
 
     return $wantarray ? @ret : $ret[0];
-}
-
-PROXY: {
-    package DBIx::Connector::Proxy;
-    our $VERSION = '0.47';
-
-    sub new {
-        require Carp;
-        my ($class, $conn, $mode) = @_;
-        Carp::croak('Missing required mode argument') unless $mode;
-        Carp::croak(qq{Invalid mode: "$mode"})
-            unless $mode =~ /^(?:fixup|(?:no_)?ping)$/;
-        bless {
-            conn => $conn,
-            mode => $mode,
-        } => $class;
-    }
-
-    sub mode { shift->{mode} }
-    sub conn { shift->{conn} }
-    sub dbh  { shift->{conn}->dbh }
-
-    sub run {
-        my $self = shift;
-        $self->{conn}->run( $self->{mode} => @_ );
-    }
-
-    sub txn {
-        my $self = shift;
-        $self->{conn}->txn( $self->{mode} => @_ );
-    }
-
-    sub svp {
-        my $self = shift;
-        $self->{conn}->svp( $self->{mode} => @_ );
-    }
-}
-
-sub with {
-    Carp::carp("DBIx::Connector->with is deprecated. Set the 'mode' attribute instead")
-        unless $ENV{DBICONNTEST};
-    DBIx::Connector::Proxy->new(@_)
 }
 
 sub _exec {
@@ -602,42 +493,6 @@ isn't recommended in any event.
 Simple, huh? Better still, go for the transaction management in
 L<C<txn()>|/"txn"> and the savepoint management in L<C<svp()>|/"svp">. You
 won't be sorry, I promise.
-
-=head3 Exception Handling
-
-B<NOTE: This feature is deprecated as of DBIx::Connector 0.46 and will be
-removed by September, 2011. Please update your modules to use L<Try::Tiny>,
-instead.>
-
-Another optional feature of the execution methods L<C<run()>|/"run">,
-L<C<txn()>|/"txn">, and L<C<svp()>|/"svp"> is integrated exception handling.
-This is especially valuable if the DBI C<RaiseError> attribute is true, or if
-the C<HandleError> attribute always throws exceptions (as the
-L<Exception::Class::DBI> handler does, for example). If an exception is thrown
-by a block passed to one of these methods, by default it will simply be
-propagated back to you (after any necessary transaction or savepoint
-rollbacks). You can of course use the standard Perl exception handling to deal
-with this situation:
-
-  eval {
-      $conn->run(sub { die 'WTF!' });
-  };
-  if (my $err = $@) {
-      warn "Caught exception: $_";
-  }
-
-Best of all is to simply pass a C<catch> code block to the execution method:
-
-  $conn->run(sub {
-      die 'WTF!';
-  }, catch => sub {
-      warn "Caught exception: $_";
-  });
-
-Either way, when an exception handler is passed, C<$@> is properly localized,
-so that if it happens to have a value before you call the execution method,
-that value will be preserved afterward. This is, therefore, the recommended
-way to handle execution exceptions in DBIx::Connector.
 
 =head3 Rollback Exceptions
 
@@ -960,61 +815,6 @@ or C<svp()>, the mode attribute will be set to the optional first parameter:
   say $conn->mode; # Outputs "ping"
 
 In this way, you can reliably tell in what mode the code block is executing.
-
-=head3 C<with>
-
-  $conn->with('fixup')->txn(sub {
-      $_->do('UPDATE users SET active = true' );
-  })
-
-B<DEPRECATED.> Will be removed in a future version. Use the C<mode> accessor,
-instead.
-
-Constructs and returns a proxy object that delegates calls to
-L<C<run()>|/"run">, L<C<txn()>|/"txn">, and L<C<svp()>|/"svp"> with a default
-L<connection mode|/"Connection Modes">. This can be useful if you always use
-the same mode and don't want to always have to be passing it as the first
-argument to those methods:
-
-  my $proxy = $conn->with('fixup');
-
-  # ... later ...
-  $proxy->run( sub { $proxy->dbh->do('SELECT update_bar()') } );
-
-This is mainly designed for use by ORMs and other database tools that need to
-require a default connection mode. But others may find it useful as well.
-The proxy object offers the following methods:
-
-=over
-
-=item C<conn>
-
-The original DBIx::Connector object.
-
-=item C<mode>
-
-The mode that will be passed to the block execution methods.
-
-=item C<dbh>
-
-Dispatches to the connection's C<dbh()> method.
-
-=item C<run>
-
-Dispatches to the connection's C<run()> method, with the C<mode> preferred
-mode.
-
-=item C<txn>
-
-Dispatches to the connection's C<txn()> method, with the C<mode> preferred
-mode.
-
-=item C<svp>
-
-Dispatches to the connection's C<svp()> method, with the C<mode> preferred
-mode.
-
-=back
 
 =head3 C<connected>
 
