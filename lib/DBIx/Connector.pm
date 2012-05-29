@@ -1,17 +1,18 @@
 package DBIx::Connector;
 
-use 5.6.2;
+use 5.006002;
 use strict;
 use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.51';
+our $VERSION = '0.52';
 
 sub new {
     my $class = shift;
+    my @args = @_;
     bless {
-        _args      => [@_],
+        _args      => sub { @args },
         _svp_depth => 0,
         _mode      => 'no_ping',
         _dond      => 1,
@@ -22,22 +23,23 @@ sub DESTROY { $_[0]->disconnect if $_[0]->{_dond} }
 
 sub _connect {
     my $self = shift;
+    my @args = $self->{_args}->();
     my $dbh = $self->{_dbh} = do {
         if ($INC{'Apache/DBI.pm'} && $ENV{MOD_PERL}) {
             local $DBI::connect_via = 'connect'; # Disable Apache::DBI.
-            DBI->connect( @{ $self->{_args} } );
+            DBI->connect( @args );
         } else {
-            DBI->connect( @{ $self->{_args} } );
+            DBI->connect( @args );
         }
     };
 
     # Modify default values.
     $dbh->STORE(AutoInactiveDestroy => 1) if DBI->VERSION > 1.613 && (
-        @{ $self->{_args} } < 4 || !exists $self->{_args}[3]{AutoInactiveDestroy}
+        @args < 4 || !exists $args[3]->{AutoInactiveDestroy}
     );
 
-    $dbh->STORE(RaiseError => 1) if @{ $self->{_args} } < 4 || (
-        !exists $self->{_args}[3]{RaiseError} && !exists $self->{_args}[3]{HandleError}
+    $dbh->STORE(RaiseError => 1) if @args < 4 || (
+        !exists $args[3]->{RaiseError} && !exists $args[3]->{HandleError}
     );
 
     # Where are we?
@@ -45,7 +47,7 @@ sub _connect {
     $self->{_tid} = threads->tid if $INC{'threads.pm'};
 
     # Set up the driver and go!
-    return $self->driver->_connect($dbh, @{ $self->{_args} });
+    return $self->driver->_connect($dbh, @args);
 }
 
 sub driver {
@@ -56,7 +58,7 @@ sub driver {
         if (my $dbh = $self->{_dbh}) {
             $dbh->{Driver}{Name};
         } else {
-            (DBI->parse_dsn( $self->{_args}[0]))[1];
+            (DBI->parse_dsn( ($self->{_args}->())[0]) )[1];
         }
     };
     $self->{driver} = DBIx::Connector::Driver->new( $driver );
@@ -539,15 +541,18 @@ The rollback error.
 
 For example:
 
+  use Try::Tiny;
   $conn->txn(sub {
-      # ...
-  }, sub {
-      if (eval { $_->isa('DBIx::Connector::RollbackError') }) {
-          say STDERR 'Transaction aborted: ', $_->error;
-          say STDERR 'Rollback failed too: ', $_->rollback_error;
-      } else {
-          warn "Caught exception: $_";
-      }
+      try {
+          # ...
+      } catch {
+          if (eval { $_->isa('DBIx::Connector::RollbackError') }) {
+              say STDERR 'Transaction aborted: ', $_->error;
+              say STDERR 'Rollback failed too: ', $_->rollback_error;
+          } else {
+              warn "Caught exception: $_";
+          }
+      };
   });
 
 If a L<C<svp()>|/"svp"> rollback fails and its surrounding L<C<txn()>|/"txn">
@@ -555,20 +560,23 @@ rollback I<also> fails, the thrown DBIx::Connetor::TxnRollbackError exception
 object will have the the savepoint rollback exception, which will be an
 DBIx::Connetor::SvpRollbackError exception object in its C<error> attribute:
 
+  use Try::Tiny;
   $conn->txn(sub {
-      $conn->svp(sub { # ... });
-  }, sub {
-      if (eval { $_->isa('DBIx::Connector::RollbackError') }) {
-          if (eval { $_->error->isa('DBIx::Connector::SvpRollbackError') }) {
-              say STDERR 'Savepoint aborted: ', $_->error->error;
-              say STDERR 'Its rollback failed too: ', $_->error->rollback_error;
+      try {
+          $conn->svp(sub { # ... });
+      } catch {
+          if (eval { $_->isa('DBIx::Connector::RollbackError') }) {
+              if (eval { $_->error->isa('DBIx::Connector::SvpRollbackError') }) {
+                  say STDERR 'Savepoint aborted: ', $_->error->error;
+                  say STDERR 'Its rollback failed too: ', $_->error->rollback_error;
+              } else {
+                  say STDERR 'Transaction aborted: ', $_->error;
+              }
+              say STDERR 'Transaction rollback failed too: ', $_->rollback_error;
           } else {
-              say STDERR 'Transaction aborted: ', $_->error;
+              warn "Caught exception: $_";
           }
-          say STDERR 'Transaction rollback failed too: ', $_->rollback_error;
-      } else {
-          warn "Caught exception: $_";
-      }
+      };
   });
 
 But most of the time, you should be fine with the stringified form of the
@@ -620,6 +628,11 @@ safe disconnects across forking processes.
 In addition, explicitly setting C<AutoCommit> to true is strongly recommended
 if you plan to use L<C<txn()>|/"txn"> or L<C<svp()>|/"svp">, as otherwise you
 won't get the transactional scoping behavior of those two methods.
+
+If you would like to execute custom logic each time a new connection to the
+database is made you can pass a sub as the C<connected> key to the
+C<Callbacks> parameter. See L<DBI/Callbacks> for usage and other available
+callbacks.
 
 Other attributes may be modified by individual drivers. See the documentation
 for the drivers for details:
