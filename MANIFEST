@@ -8,8 +8,6 @@ lib/DBIx/Connector/Driver/Oracle.pm
 lib/DBIx/Connector/Driver/Pg.pm
 lib/DBIx/Connector/Driver/SQLite.pm
 MANIFEST			This list of files
-META.json
-META.yml
 README
 t/base.t
 t/driver.t
@@ -26,3 +24,5 @@ t/svp_ping.t
 t/txn.t
 t/txn_fixup.t
 t/txn_ping.t
+META.yml
+META.json

@@ -6,7 +6,7 @@ use warnings;
 use DBI '1.605';
 use DBIx::Connector::Driver;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 
 sub new {
     my $class = shift;
@@ -31,7 +31,7 @@ sub _connect {
         } else {
             DBI->connect( @args );
         }
-    };
+    } or return;
 
     # Modify default values.
     $dbh->STORE(AutoInactiveDestroy => 1) if DBI->VERSION > 1.613 && (
@@ -895,7 +895,7 @@ An example:
        return $conn->dbh;
   }
 
-Of course, if you don't need to do an work with the database handle before
+Of course, if you don't need to do any work with the database handle before
 returning it to your caller, you can just use C<connect()>:
 
   sub database_handle {
@@ -906,7 +906,7 @@ returning it to your caller, you can just use C<connect()>:
 
   $conn->disconnect;
 
-Disconnects from the database. Unless C<disonnect_on_destory()> has been
+Disconnects from the database. Unless C<disconnect_on_destroy()> has been
 passed a false value, DBIx::Connector uses this method internally in its
 C<DESTROY> method to make sure that things are kept tidy.
 
